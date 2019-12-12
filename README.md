@@ -46,5 +46,5 @@ if(length(cran_pkgs.inst)>0){
 library(shiny)
 library(shinyjs)
 # run on the host port 8787 (or whaterver port you want to map on your system)
-runGitHub("BMDx", "angy89")
+runGitHub("BMDx", "Greco-Lab")
 ```
