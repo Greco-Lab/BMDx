@@ -36,6 +36,8 @@ library(gtable)
 library(shinycssloaders)
 library(UpSetR)
 library(XLConnect)
+library(doParallel)
+library(trend)
 
 set.seed(12)
 load(file ="data/updated_kegg_hierarhcy.RData")
@@ -52,6 +54,7 @@ source("functions/kegg_mats.R")
 source("functions/mselect.R")
 source("functions/ED.lin.R")
 source("functions/bmdx_utilities.R")
+source("functions/trend_test.R")
 
 # this instruction increase the maximum size of the file that can be uploaded in a shiny application
 options(shiny.maxRequestSize=300*1024^2) 
@@ -166,7 +169,7 @@ shinyServer(function(input, output, session) {
 
     shinyBS::toggleModal(session, "importGxModal", toggle="close")
     shinyBS::updateButton(session, "import_expr_submit", style="success", icon=icon("check-circle"))
-    shinyBS::updateCollapse(session, "bsSidebar1", open="ANOVA FILTERING", style=list("LOAD EXPRESSION MATRIX"="success","ANOVA FILTERING"="warning"))
+    shinyBS::updateCollapse(session, "bsSidebar1", open="GENE FILTERING", style=list("LOAD EXPRESSION MATRIX"="success","GENE FILTERING"="warning"))
     print("open anova")
     shiny::updateTabsetPanel(session, "display",selected = "gExpTab")
     
@@ -438,9 +441,46 @@ shinyServer(function(input, output, session) {
       shinyBS::updateButton(session, "anova_filtering_button", style="success", icon=icon("check-circle"))
       shinyBS::updateButton(session, "skip_anova_filtering_button", style="success", icon=icon("check-circle"))
       
-      shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("ANOVA FILTERING"="success","COMPUTE BMD"="warning"))
+      shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("GENE FILTERING"="success","COMPUTE BMD"="warning"))
       
 
+  })
+  
+  observeEvent(input$trend_analysis,{
+    shiny::validate(
+      need(!is.null(gVars$phTable), "No Phenotype File Provided!")
+    )
+    
+    shiny::validate(
+      need(!is.null(gVars$inputGx), "No Phenotype File Provided!")
+    )
+    
+  print("in trend test")
+    
+    trend_test_res = trend_test(pheno_data_list=gVars$phTable,
+                                expression_list=gVars$inputGx,
+                                time_point_index = gVars$TPColID,
+                                dose_index = gVars$doseColID,
+                                time_point_id = input$time_point_id,
+                                sample_index = gVars$sampleColID,
+                                adj.pval = input$TrendAdjBool,
+                                p.th=as.numeric(input$trendPvalTh),
+                                nCores = as.numeric(input$trendNCores))
+
+    if(is.null(trend_test_res)==FALSE){
+    #if(trend_completed){
+      gVars$EXP_FIL = trend_test_res$list_of_filtered_expression_values # EXP_FIL
+      gVars$var_genes = trend_test_res$list_of_variable_genes #var_genes
+      gVars$not_var_genes =trend_test_res$list_of_non_variable_genes #not_var_genes
+      gVars$PValMat= trend_test_res$list_of_matrices_with_anova_pvalue #PValMat
+      
+      shinyBS::toggleModal(session, "computeTrend", toggle="close")
+      shinyBS::updateButton(session, "trend_filtering_button", style="success", icon=icon("check-circle"))
+      shinyBS::updateButton(session, "skip_anova_filtering_button", style="success", icon=icon("check-circle"))
+      shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("GENE FILTERING"="success","COMPUTE BMD"="warning"))
+      shiny::updateTabsetPanel(session, "display",selected = "AnovaTab")
+    }
+      
   })
   
   observeEvent(input$anova_analysis, {
@@ -476,7 +516,7 @@ shinyServer(function(input, output, session) {
                                         time_t=tp,
                                         tpc = gVars$TPColID, 
                                         dc = gVars$doseColID, 
-                                        sc = gVars$sampleColID)
+                                        sc = gVars$sampleColID,nCores = as.numeric(input$anovaNCores))
           
           if(is.null(pvalues_genes)){
             
@@ -536,7 +576,7 @@ shinyServer(function(input, output, session) {
       shinyBS::toggleModal(session, "computeAnova", toggle="close")
       shinyBS::updateButton(session, "anova_filtering_button", style="success", icon=icon("check-circle"))
       shinyBS::updateButton(session, "skip_anova_filtering_button", style="success", icon=icon("check-circle"))
-      shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("ANOVA FILTERING"="success","COMPUTE BMD"="warning"))
+      shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("GENE FILTERING"="success","COMPUTE BMD"="warning"))
       shiny::updateTabsetPanel(session, "display",selected = "AnovaTab")
     }
     
@@ -568,16 +608,19 @@ shinyServer(function(input, output, session) {
       print(timep)
       
       maxDose = max(as.numeric(unique(gVars$phTable[[j]][,gVars$doseColID])))
+      minDose = min(as.numeric(unique(gVars$phTable[[j]][,gVars$doseColID])))
       
       for(i in timep){
 
+        print("xxx")
+        
         MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]]  = compute_bmd(exp_data=gVars$EXP_FIL[[names(gVars$phTable)[j]]][[as.character(i)]], pheno_data=gVars$phTable[[names(gVars$phTable)[j]]],
                               time_t=as.character(i), #interval_type = input$Interval,
                               tpc = gVars$TPColID, 
                               dc = gVars$doseColID, 
-                              sc = gVars$sampleColID, sel_mod_list = as.numeric(input$ModGroup),rl = as.numeric(input$RespLev))
+                              sc = gVars$sampleColID, sel_mod_list = as.numeric(input$ModGroup),rl = as.numeric(input$RespLev),constantVar = input$constantVar, nCores = as.numeric(input$BMDNCores))
 
-        MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]   = BMD_filters(BMDRes = MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]],max_dose = as.numeric(maxDose), loofth = as.numeric(input$LOOF))
+        MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]   = BMD_filters(BMDRes = MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]],max_dose = as.numeric(maxDose),min_dose = as.numeric(minDose),max_low_dos_perc_allowd = as.numeric(input$min_dose_perc),max_max_dos_perc_allowd = as.numeric(input$max_dose_perc)  ,loofth = as.numeric(input$LOOF))
         MQ_BMDListFilteredValues[[names(gVars$phTable)[j]]][[as.character(i)]]  =  MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]$BMDValues_filtered
       }
       incProgress(1/length(gVars$phTable), detail = paste("BMD Experiment: ",j+1," Experiment: ",j+1 ,"/",length(gVars$phTable),sep=""))
@@ -1241,8 +1284,8 @@ shinyServer(function(input, output, session) {
     piepercent<- round(100*x/sum(x), 1)
     
     # Plot the chart.
-    pie(x, labels = piepercent, main = "Anova Result",col = rainbow(length(x)))
-    legend("topright", c("Variable Genes","Non Variable Genes"), cex = 0.8,
+    pie(x, labels = piepercent, main = "Filtering Result",col = rainbow(length(x)))
+    legend("topright", c("Significant Genes","Non Significant Genes"), cex = 0.8,
            fill = rainbow(length(x)))
     
   })
@@ -2565,6 +2608,20 @@ shinyServer(function(input, output, session) {
     
   })
   
+  output$trendTimePoint <- renderUI({
+    shiny::validate(
+      need(!is.null(gVars$phTable), "No Pheno Data file!")
+    )
+    print("Ciao")
+    if(length(gVars$phTable)>1){
+      selectInput("time_point_id", "Time Points", choices=c("All"))
+      
+    }else{
+      selectInput("time_point_id", "Time Points", choices=c("All",unique(gVars$phTable[[1]][,gVars$TPColID])))
+    }
+    
+  })
+  
 
   output$bmd_checkbox = renderUI({
     #shiny::validate(need(!is.null(gVars$phTable), "No Pheno Data file!"))
@@ -2577,15 +2634,20 @@ shinyServer(function(input, output, session) {
       selected = 22:34
     }
     if(input$BMDSettings == "Custom"){
-      selected = c(19,21,22,23,25,27)
+      selected = c(22,23,25,29,30,31)#c(19,21,22,23,25,27)
     }
     if(input$BMDSettings == "Degree of Freedom"){
+      print("degree of freedom")
       if(is.null(gVars$phTable)){
         nDose = 0
       }else{
-        nDose = length(unique(gVars$phTable[,gVars$doseColID]))
+        nDoses = c()
+        for(i in 1:length(gVars$phTable)){
+          nDoses = c(nDoses,length(unique(gVars$phTable[[i]][,gVars$doseColID])))
+        }
       }
-      if(nDose>0){
+      if(length(nDoses)>0){
+        nDose = min(nDoses)-1
         DF =  nDose - 1
         modDF = c(2,3,Inf, 4,5,2,3,4,Inf,Inf,Inf,4,5,Inf,Inf,Inf,Inf,2,3,2,3,1,2,3,2,3,4,1,1,1,2,3,4,5)
         selected = which(modDF<=DF)

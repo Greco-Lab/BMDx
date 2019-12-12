@@ -79,9 +79,9 @@ mselect2 = function (object, fctList = NULL, nested = FALSE,
     linModMat <- matrix(unlist(lapply(linFitList, function(listObj) {
       c(logLik(listObj), icfct(listObj), NA, (summary(listObj)$sigma)^2)
     })), 3, 4, byrow = TRUE)
-    linModMat[1,3] = pureErrorAnova(linFitList[[1]])[[5]][3] #1
-    linModMat[2,3] = pureErrorAnova(linFitList[[2]])[[5]][4] #2
-    linModMat[3,3] = pureErrorAnova(linFitList[[3]])[[5]][5] #3
+    linModMat[1,3] = alr3::pureErrorAnova(linFitList[[1]])[[5]][3] #1
+    linModMat[2,3] = alr3::pureErrorAnova(linFitList[[2]])[[5]][4] #2
+    linModMat[3,3] = alr3::pureErrorAnova(linFitList[[3]])[[5]][5] #3
     
     rownames(linModMat) <- c("Linear", "Quadratic", "Cubic")
     colnames(linModMat) <- cnames[1:4]
@@ -95,7 +95,7 @@ mselect2 = function (object, fctList = NULL, nested = FALSE,
       drcData <- as.data.frame(object$data[, c(2, 1)])
       names(drcData) <- c("yVec", "xVec")
       mod_pow = lm(yVec ~ I(xVec^pp), data = drcData)
-      powModMat = matrix(c(logLik(mod_pow), icfct(mod_pow), pureErrorAnova(mod_pow)[[5]][3], (summary(mod_pow)$sigma)^2), nrow = 1, ncol = 4)
+      powModMat = matrix(c(logLik(mod_pow), icfct(mod_pow), alr3::pureErrorAnova(mod_pow)[[5]][3], (summary(mod_pow)$sigma)^2), nrow = 1, ncol = 4)
       rownames(powModMat) = paste("Power",pp,sep="")  
       colnames(powModMat) <- cnames[1:4]
       retMat <- rbind(retMat, powModMat) 
@@ -128,7 +128,7 @@ mselect2 = function (object, fctList = NULL, nested = FALSE,
       names(drcData) <- c("yVec", "xVec")
       ill_mod <- lm(yVec ~ I(xVec^hillN / (Kd + xVec^hillN)),data = drcData)
       #effect_plot(y.nls, pred = dose, interval = TRUE, plot.points = TRUE)
-      illModMat = matrix(c(logLik(ill_mod), icfct(ill_mod), pureErrorAnova(ill_mod)[[5]][3], (summary(ill_mod)$sigma)^2), nrow = 1, ncol = 4)
+      illModMat = matrix(c(logLik(ill_mod), icfct(ill_mod), alr3::pureErrorAnova(ill_mod)[[5]][3], (summary(ill_mod)$sigma)^2), nrow = 1, ncol = 4)
       if(hN == 0.5) hN = "05"
       rownames(illModMat) = paste("Hill",hN,sep="")   
       colnames(illModMat) <- cnames[1:4]
