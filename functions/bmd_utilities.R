@@ -710,20 +710,22 @@ BMD_filters = function(BMDRes,max_dose = 20, min_dose, max_low_dos_perc_allowd =
   BMDValues = BMDRes$BMDValues
   BMDModels = BMDRes$opt_models_list
   
-  bmd_to_rem_low_dose = which(as.numeric(BMDValues[,"BMD"])<= (min_dose - (min_dose*0.1)))
-  
-  bmd_to_rem = which(as.numeric(BMDValues[,"BMD"])>=max_dose)
-  loof_to_rem = which(as.numeric(BMDValues[,"LOFPVal"])<=loofth)
-  
-  bmd_na = union(which(is.na(BMDValues[,"BMD"])),
-                 union(which(is.na(BMDValues[,"BMDL"])),
-                       which(is.na(BMDValues[,"BMDU"]))))
-  
-  bmd_neg = union(which(as.numeric(BMDValues[,"BMD"])<0),
-                  union(which(as.numeric(BMDValues[,"BMDL"])<0),
-                        which(as.numeric(BMDValues[,"BMDU"])<0)))
-  
-  bounds = union(which(as.numeric(BMDValues[,"BMDL"])<=0), which(as.numeric(BMDValues[,"BMDU"])>= max_dose))
+  bmd_to_rem_low_dose = which(as.numeric(as.vector(BMDValues[,"BMD"]))<= (min_dose - (min_dose*0.1)))
+
+  bmd_to_rem = which(as.numeric(as.vector(BMDValues[,"BMD"]))>=max_dose)
+  loof_to_rem = which(as.numeric(as.vector(BMDValues[,"LOFPVal"]))<=loofth)
+
+  bmd_na = union(which(is.na(as.vector(BMDValues[,"BMD"]))),
+                 union(which(is.na(as.vector(BMDValues[,"BMDL"]))),
+                       which(is.na(as.vector(BMDValues[,"BMDU"])))))
+
+  bmd_na = union(bmd_na, which(is.na(as.numeric(as.vector(BMDValues[,"IC50/EC50"])))))
+
+  bmd_neg = union(which(as.numeric(as.vector(BMDValues[,"BMD"]))<0),
+                  union(which(as.numeric(as.vector(BMDValues[,"BMDL"]))<0),
+                        which(as.numeric(as.vector(BMDValues[,"BMDU"]))<0)))
+
+  bounds = union(which(as.numeric(as.vector(BMDValues[,"BMDL"]))<=0), which(as.numeric(as.vector(BMDValues[,"BMDU"]))>= max_dose))
   
   # print("BMD to rem  -->> ")
   # print(bmd_to_rem)
