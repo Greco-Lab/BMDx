@@ -387,7 +387,7 @@ compute_bmd = function(exp_data,pheno_data,time_t=4,interval_type = "delta",tpc 
   
   #listComb,.multicombine=TRUE, .init=list(c(), c())
   res <- foreach(i=1:nrow(exp_data),.combine="c", 
-                 .export = c("fit_models_mselect","fit_models","modelFit","mselect2","ED.lin"),
+                 .export = c("fit_models_mselect","fit_models","modelFit","mselect2","ED.lin","monotonicity"),
                  .errorhandling="stop") %dopar% {
                    
                    #for(i in 1:nrow(exp_data)){
@@ -422,24 +422,52 @@ compute_bmd = function(exp_data,pheno_data,time_t=4,interval_type = "delta",tpc 
                        if(mod$mod_name %in% c("Linear","Quadratic","Cubic","Power2","Power3","Power4","Exponential",
                                               "Hill05","Hill1","Hill2","Hill3","Hill4","Hill5")){
                          bmd_val = ED.lin(lmObject = mod$opt_mod,respLev = sd_level, dose=df_gi$dose)
-                       }else{
-                         mmin = min(mod$opt_mod$predres[which(dose==min(dose)),1])
-                         mmax = max(mod$opt_mod$predres[which(dose==max(dose)),1])
-                         if(mmax>mmin){
-                           response_level = mean(exp[which(dose==0)]) + sd_level
-                           decreasing = FALSE
+                         
+                         if(is.null(bmd_val) == FALSE){
+                           colnames(bmd_val) = c("BMD","BMDL", "BMDU","IC50/EC50","Decreasing")
                          }else{
-                           response_level = mean(exp[which(dose==0)]) - sd_level
-                           decreasing = TRUE
+                           bmd_val = NULL
                          }
-                         bmd_val = ED(object = mod$opt_mod, respLev = response_level, interval = interval_type, level = 0.05, type = "relative")[, c(1,3,4), drop = FALSE]
+                       }else{
                          
-                         ic50 = max(df_gi$expr) - ((max(df_gi$expr) - min(df_gi$expr))/2)
-                         icval = ED(object = mod$opt_mod, respLev = ic50, interval = interval_type, level = 0.05, type = "relative")[, 1, drop = FALSE]
-                         bmd_val = cbind(bmd_val,icval, decreasing)
+                         # mmin = min(mod$opt_mod$predres[which(dose==min(dose)),1])
+                         # mmax = max(mod$opt_mod$predres[which(dose==max(dose)),1])
+                         # if(mmax>mmin){
+                         #   response_level = mean(exp[which(dose==0)]) + sd_level
+                         #   decreasing = FALSE
+                         # }else{
+                         #   response_level = mean(exp[which(dose==0)]) - sd_level
+                         #   decreasing = TRUE
+                         # }
+                         # bmd_val = ED(object = mod$opt_mod, respLev = response_level, interval = interval_type, level = 0.95, type = "absolute")[, c(1,3,4), drop = FALSE]
+                         # 
+                         # ic50 = max(df_gi$expr) - ((max(df_gi$expr) - min(df_gi$expr))/2)
+                         # icval = ED(object = mod$opt_mod, respLev = ic50, interval = interval_type, level = 0.95, type = "absolute")[, 1, drop = FALSE]
+                         # bmd_val = cbind(bmd_val,icval, decreasing)
                          
+                         monotonic_behaviour = monotonicity(fittedModel=mod$opt_mod,dose,range.length = 1000)
+                         
+                         if(monotonic_behaviour == 0){
+                           bmd_val = NULL
+                         }else{
+                           if(monotonic_behaviour==1){
+                             response_level = mean(exp[which(dose==0)]) + sd_level
+                             decreasing = FALSE
+                           }else if (monotonic_behaviour==-1){
+                             response_level = mean(exp[which(dose==0)]) - sd_level
+                             decreasing = TRUE
+                           }
+                           
+                           bmd_val = ED(object = mod$opt_mod,, respLev = response_level, interval = interval_type, level = 0.95, type = "absolute", display=FALSE)[, c(1,3,4), drop = FALSE]
+                           
+                           ic50 = max(dataframe$expr) - ((max(dataframe$expr) - min(dataframe$expr))/2)
+                           icval = ED(object = mod$opt_mod, respLev = ic50, interval = interval_type, level = 0.95, type = "absolute")[, 1, drop = FALSE]
+                          
+                           colnames(bmd_val) = c("BMD","BMDL", "BMDU","IC50/EC50","Decreasing")
+                           
+                         }
                        }
-                       colnames(bmd_val) = c("BMD","BMDL", "BMDU","IC50/EC50","Decreasing")
+                       # colnames(bmd_val) = c("BMD","BMDL", "BMDU","IC50/EC50","Decreasing")
                        bmd_val
                      }, error = function(e) {
                        cat("Error\n")
