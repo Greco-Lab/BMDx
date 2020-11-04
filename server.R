@@ -56,6 +56,9 @@ source("functions/ED.lin.R")
 source("functions/bmdx_utilities.R")
 source("functions/trend_test.R")
 
+source("functions/plot_grid.R")
+source("functions/plot_grid_genes.R")
+
 # this instruction increase the maximum size of the file that can be uploaded in a shiny application
 options(shiny.maxRequestSize=300*1024^2) 
 
