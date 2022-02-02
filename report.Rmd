@@ -1,0 +1,195 @@
+---
+title: "REPORT"
+output: html_document
+params:
+  gVars: NA
+  input: NA
+  srcDir: NA
+---
+
+# R version and platform
+```{r}
+base::version
+```
+
+# Timestamp
+```{r}
+print(Sys.time())
+```
+
+# BMD Analysis setting
+```{r}
+
+print(paste("Response level: ", params$input$RespLev, sep = ""))
+print(paste("Assumption of constant variance: ", params$input$constantVar, sep = ""))
+print(paste("Confidence interval: ", params$input$conf_interval, sep = ""))
+print(paste("Threshold on lack-of-fit: ", params$input$LOOF, sep = ""))
+print(paste("Use only first model based on AIC: ", params$input$first_model_AIC, sep = ""))
+print(paste("Allow only  strictly monotonic models: ", params$input$strictly_monotonic, sep = ""))
+
+print(paste("Min dose percentage: ", params$input$min_dose_perc2, sep = ""))
+print(paste("Max dose percentage: ", params$input$max_dose_perc2, sep = ""))
+print(paste("Filter bmdl/bmdu bounds: ", params$input$filter_bounds_bmdl_bmdu2, sep = ""))
+
+print(paste("Thredhold BMD/BMDL: ", params$input$bmd_bmdl_th2, sep = ""))
+print(paste("Thredhold BMD/BMDU: ", params$input$bmdu_bmd_th2, sep = ""))
+print(paste("Thredhold BMDU/BMDL: ", params$input$bmdu_bmdl_th2, sep = ""))
+print(paste("Ratio filter: ", params$input$ratio_filter2, sep = ""))
+
+print("Fitted models: ")
+print(paste(params$gVars$AllAvailableModels[as.numeric(params$input$ModGroup)], collapse = "; "))
+```
+
+
+# Comparison between time points
+
+# BMD Distribution
+```{r}
+width_p = 900
+  p = params$gVars$BMD_dist_TP
+  ggplotly(p,width = width_p)
+```
+
+# BMD p-value fitting
+```{r}
+  p = params$gVars$BMD_pval_fitting
+  ggplotly(p,width = width_p)
+```
+
+# BMD/BMLDL
+```{r}
+  p = params$gVars$BMD_BMDL
+  ggplotly(p,width = width_p)
+```
+
+# BMD distribution
+```{r}
+  params$gVars$BMD_dist_models
+```
+
+# BMD, BMDL, BMDU by model
+```{r}
+  p = params$gVars$BMD_BMDL_BMDU_by_model
+  if(!is.null(p)) ggplotly(p,width = width_p) %>%layout(boxmode = "group")
+
+```
+
+# Number of genes by time
+```{r}
+p = params$gVars$NGTime
+ggplotly(p,width = width_p)
+```
+
+# Venn diagram/TP comparison
+```{r}
+ venn(params$gVars$GL)
+```
+
+```{r}
+df = params$gVars$venn_genes_df
+DT::datatable(df, filter="top",
+      options = list(
+        search = list(regex=TRUE, caseInsensitive=FALSE),
+        scrollX=TRUE,
+        ordering=T,
+        lengthMenu = c(5, 10, 15, 20, 40, 60, 100)
+      ))
+
+p=params$gVars$gene_bmd_plot
+ggplotly(p,width = width_p)
+      
+
+```
+
+
+# Pathway tables
+```{r}
+DT::datatable(params$gVars$PATWAY_tab, filter="top",
+                  options = list(
+                    search = list(regex=TRUE, caseInsensitive=FALSE),
+                    scrollX=TRUE,
+                    ordering=T
+                  ))
+```
+
+# BMD distribution in selected pathway
+```{r}
+print(paste("Selected TP: ", params$input$time_point_id_visualPat))
+
+selectedrowindex = params$input$PAT_table_rows_selected[length(params$input$PAT_table_rows_selected)]
+selectedrowindex = as.numeric(selectedrowindex)
+
+ER = params$gVars$EnrichDatList[[params$input$time_point_id_visualPat]]
+PatName = ER[selectedrowindex,"Description"]
+
+print(paste("Selected pathway:", PatName))
+p = params$gVars$BMD_dist_in_path
+ggplotly(p, width = 1500)
+```
+
+# USER CAN MANUALLY CUSTOMIZE THE REPORT:
+
+```{r}
+# file = "/Users/meanser/onedrive/nextcast_paper/BMDX_example/bmdx_all_genes/terms_enrichment_table.xlsx"
+# print("I'm saving enrichment tables")
+# for(i in 1:length(params$gVars$EnrichDatList)){
+#   if(nrow(params$gVars$EnrichDatList[[i]])>0){
+#     write.xlsx(params$gVars$EnrichDatList[[i]], file, sheetName =  names(params$gVars$EnrichDatList)[i], append = TRUE) 
+#   }
+# }
+
+# plotlist = list()
+# for(id in c("MWCNT_24","MWCNT_48" ,"MWCNT_72")){
+#   PATWAY_tab <- params$gVars$EnrichDatList[[id]]
+#   print(paste("Selected TP: ", id))
+# 
+#   for(selectedrowindex in 1:nrow(PATWAY_tab)){
+#     ER = params$gVars$EnrichDatList[[id]]
+#     PatDesc = ER[selectedrowindex,"Description"]
+#     
+#     print(paste("Selected pathway:", PatDesc))
+#   
+#     PatName = ER[selectedrowindex,"annID"]
+#     PatGenes = ER[selectedrowindex,"gID"]
+#     
+#     exp_tp = unlist(strsplit(id,"_"))
+#     
+#     if(is.null(params$gVars$MQ_BMD_filtered)){
+#       BMDFilMat = params$gVars$MQ_BMD[[exp_tp[1]]][[exp_tp[2]]]$BMDValues
+#       
+#     }else{
+#       BMDFilMat = params$gVars$MQ_BMD_filtered[[exp_tp[1]]][[exp_tp[2]]]$BMDValues_filtered
+#       
+#     }
+#     
+#     gi = unlist(strsplit(x = ER[selectedrowindex,2],split = ","))
+#     idx = which(tolower(BMDFilMat[,1])%in% tolower(gi))
+#     BMD = as.numeric(BMDFilMat[idx,"BMD"])
+#     BMDL = as.numeric(BMDFilMat[idx,"BMDL"])
+#     BMDU = as.numeric(as.vector(BMDFilMat[idx,"BMDU"]))
+#     
+#     names(BMD) = BMDFilMat[idx,"Gene"]
+#     names(BMDL) = names(BMDU) = names(BMD)
+#     
+# 
+#     BMD = data.frame(gene = names(BMD), bmd = BMD, bmdl = BMDL, bmdu = BMDU)
+#     BMD = BMD[order(BMD$bmd),]
+#     BMD$gene = factor(x = BMD$gene, levels = BMD$gene)
+#     
+# 
+#     p = ggplot(data=BMD, aes(x=gene, y=bmd, group=1, label1 = bmdl, label2 = bmdu)) +
+#       geom_line()+
+#       geom_point() +
+#       geom_ribbon(aes(ymin=BMD$bmdl, ymax=BMD$bmdu), linetype=2, alpha=0.1) +
+#       labs(y = "BMDL - BMD - BMDU", x = "Gene")+ggtitle(paste(id, PatDesc, sep = "-"))
+#     
+#     if(length(gi>20)) width_p = 1300 else width_p = 900
+#     plotlist[[paste(id, PatDesc, sep = "-")]] = ggplotly(p, width = width_p)
+#     
+#   }
+# }
+# 
+# htmltools::tagList(plotlist)
+
+```
+

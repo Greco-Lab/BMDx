@@ -38,6 +38,7 @@ library(UpSetR)
 library(XLConnect)
 library(doParallel)
 library(trend)
+library(miceadds)
 
 set.seed(12)
 load(file ="data/updated_kegg_hierarhcy.RData")
@@ -46,15 +47,30 @@ load("data/hm_reactome_hierarchy.RData")
 load("data/rat_reactome_hierarchy.RData")
 load("data/rat_kegg_hyerarchy.RData")
 reduced_kegg_hierarchy = kegg_hierarchy
-source("functions/bmd_utilities.R")
+
 source("functions/path_grid_plot.R")
+source("functions/plot_grid.R")
+source("functions/plot_grid_genes.R")
 source("functions/enrich_functions.R")
 source("functions/goHier.R")
 source("functions/kegg_mats.R")
+
+source("functions/bmd_utilities.R")
 source("functions/mselect.R")
 source("functions/ED.lin.R")
 source("functions/bmdx_utilities.R")
 source("functions/trend_test.R")
+source("functions/compute_bmd_internal.R")
+source("functions/fit_models_mselect2.R")
+source("functions/fit_models_lm.R")
+
+
+#Get source directory
+srcDir <- dirname(getSrcDirectory(function(x){x}))
+print("Print Source Directory")
+#print(dirname(getSrcDirectory(function(x){x})))
+print(srcDir)
+
 
 source("functions/plot_grid.R")
 source("functions/plot_grid_genes.R")
@@ -73,9 +89,7 @@ tmpMethod <- NULL
 #Function to hide bsCollapsePanel
 hideBSCollapsePanel <- function(session, panel.name)
 {
-  #print("In hideBSCollapsePanel")
   session$sendCustomMessage(type='hideBSCollapsePanelMessage', message=list(name=panel.name))
-  #print("Exiting hideBSCollapsePanel")
 }
 
 
@@ -89,7 +103,8 @@ factorize_cols <- function(phTable, idx){
 
 
 shinyServer(function(input, output, session) {
-
+  # observe_helpers(withMathJax = TRUE)
+  
   # Global variable list
   gVars <- shiny::reactiveValues(
     phTable=NULL,             # setting pheno data matrix
@@ -143,14 +158,19 @@ shinyServer(function(input, output, session) {
   gVars$normChoices <- c("Between Arrays"="BA", "Quantile"="quantile", "Variance Stabilizing"="vsn", "Cyclic Loess"="cl")
   gVars$baChoices <- c("None"="none", "Scale"="scale", "Quantile"="quantile", "Cyclic Loess"="cyclicloess")
   
+  gVars$AllAvailableModels =  mNames_all = c("LL.2","LL.3","LL.3u","LL.4","LL.5",
+                                             "W1.2","W1.3","W1.4","W2.2","W2.3","W2.4",
+                                             "BC.4","BC.5",
+                                             "LL2.2","LL2.3","LL2.4","LL2.5",
+                                             "AR.2","AR.3",
+                                             "MM.2","MM.3","Linear", "Quadratic", "Cubic",
+                                             "Power2","Power3","Power4","Exponential",
+                                             "Hill05","Hill1","Hill2","Hill3","Hill4","Hill5")
   
-  #gVars$inputGx <- 
   observeEvent(input$upload_gx_submit, {
     gxFile <- input$gx
     if (is.null(gxFile))
       return(NULL)
-    
-    print("Reading loaded gx File...")
     
     gx = read_excel_allsheets(filename = gxFile$datapath,tibble = FALSE)
     for(i in 1:length(gx)){
@@ -173,7 +193,6 @@ shinyServer(function(input, output, session) {
     shinyBS::toggleModal(session, "importGxModal", toggle="close")
     shinyBS::updateButton(session, "import_expr_submit", style="success", icon=icon("check-circle"))
     shinyBS::updateCollapse(session, "bsSidebar1", open="GENE FILTERING", style=list("LOAD EXPRESSION MATRIX"="success","GENE FILTERING"="warning"))
-    print("open anova")
     shiny::updateTabsetPanel(session, "display",selected = "gExpTab")
     
   })
@@ -206,11 +225,8 @@ shinyServer(function(input, output, session) {
         sepChar=sepS
       }
     }
-    print(sepChar)
-    
+
     quote <- input$quote
-    print(quote)
-    print(is.na(quote))
     if(is.na(quote) || quote=="NA"){
       quote <- ""
     }else if(quote=="SINGLE"){
@@ -241,8 +257,6 @@ shinyServer(function(input, output, session) {
     gVars$dgxFileName <- dgxFile$name
     dgxTable <- read.csv(dgxFile$datapath, row.names=1, header=TRUE, sep=sepChar, stringsAsFactors=FALSE, quote=quote, as.is=TRUE, strip.white=TRUE, check.names=FALSE)
     
-    print("str(dgxTable) -- after:")
-    print(str(dgxTable))
     return(dgxTable)
   })
   
@@ -280,14 +294,11 @@ shinyServer(function(input, output, session) {
       return(NULL)
     
     phFile <- input$fPheno
-    print("separator -->")
     phTable = read_excel_allsheets(filename = phFile$datapath,tibble = FALSE)
     
     phTable = phTable
     
     gVars$phLoaded <- 1
-    print("str(phTable) -- after:")
-    print(str(phTable))
     
     return(phTable)
   })
@@ -309,7 +320,6 @@ shinyServer(function(input, output, session) {
     if(coltypes.nonChar.len>0){
       colNames[["n"]] <- colnames(phTable)[coltypes.nonChar.idx]
     }
-    print(str(colNames))
     return(colNames)
   })
   
@@ -368,24 +378,18 @@ shinyServer(function(input, output, session) {
     phTable <- phenoList[[1]]
     colNames <- paste0(colnames(phTable), " [", c(1:ncol(phTable)), "]")
     colTypesList <- gVars$phColTypes()
-    print(str(colTypesList))
     colClass <- unlist(lapply(phTable, class))
-    print(str(colClass))
 
     colTypesDF <- data.frame(Variable=colNames, Type="-", Class=colClass, t(head(phTable)), stringsAsFactors=FALSE)
     colnames(colTypesDF)[c(4:ncol(colTypesDF))] <- paste0("Sample", c(1:(ncol(colTypesDF)-3)))
     if(!is.null(colTypesList[["c"]])){
-      print("In colTypes C...")
       cIdx <- which(colnames(phTable) %in% colTypesList[["c"]])
-      print(cIdx)
       if(length(cIdx>0)){
         colTypesDF[cIdx,"Type"] <- "factor"
       }
     }
     if(!is.null(colTypesList[["n"]])){
-      print("In colTypes N...")
       nIdx <- which(colnames(phTable) %in% colTypesList[["n"]])
-      print(nIdx)
       if(length(nIdx>0)){
         colTypesDF[nIdx,"Type"] <- "vector"
       }
@@ -412,9 +416,6 @@ shinyServer(function(input, output, session) {
         need(!is.null(gVars$inputGx), "No Expression File Provided!")
       )
       
-      print("skip anova")
-      
-      #timep = unique(gVars$phTable[,gVars$TPColID])
       EXP_FIL_List = list()
       VG_List = list()
       NVG_List = list()
@@ -438,14 +439,10 @@ shinyServer(function(input, output, session) {
       gVars$var_genes = VG_List #var_genes
       gVars$not_var_genes = NVG_List #not_var_genes
       gVars$PValMat= PValMat_List #PValMat
-      
-      print("no anova")
-      
+    
       shinyBS::updateButton(session, "anova_filtering_button", style="success", icon=icon("check-circle"))
       shinyBS::updateButton(session, "skip_anova_filtering_button", style="success", icon=icon("check-circle"))
-      
       shinyBS::updateCollapse(session, "bsSidebar1", open="COMPUTE BMD", style=list("GENE FILTERING"="success","COMPUTE BMD"="warning"))
-      
 
   })
   
@@ -457,8 +454,6 @@ shinyServer(function(input, output, session) {
     shiny::validate(
       need(!is.null(gVars$inputGx), "No Phenotype File Provided!")
     )
-    
-  print("in trend test")
     
     trend_test_res = trend_test(pheno_data_list=gVars$phTable,
                                 expression_list=gVars$inputGx,
@@ -513,7 +508,6 @@ shinyServer(function(input, output, session) {
         for(tp in  timep){
           print(tp)
           
-          print("ciao")
           pvalues_genes = compute_anova(exp_data = gVars$inputGx[[i]], #[runif(n = 500,min = 1,max = nrow(gVars$inputGx)),], # TOGLIERE LA SELEZIONE RANDOM DEI GENI
                                         pheno_data=gVars$phFactor[[i]], 
                                         time_t=tp,
@@ -527,7 +521,6 @@ shinyServer(function(input, output, session) {
               "Cannot perform anova with only one dose-level. check dose and time point columns"
             })
             
-            #shinyalert("Oops!", "Cannot perform anova with only one dose-level. check dose and time point columns", type = "error")
             anova_completed=FALSE
             return(NULL)
           }else{
@@ -536,10 +529,16 @@ shinyServer(function(input, output, session) {
             })
           }
           
-          c(EXP_FIL, var_genes, not_var_genes,PValMat) %<-% filter_anova(exp_data=gVars$inputGx[[i]], 
+          EXP_FIL_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = c()
+          VG_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = c()
+          NVG_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = c()
+          PValMat_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = c()
+          
+          c(EXP_FIL, not_var_genes,var_genes, PValMat) %<-% filter_anova(exp_data=gVars$inputGx[[i]], 
                                                                          pvalues_genes=pvalues_genes, 
                                                                          adj.pval = input$adjBool, 
                                                                          p.th=as.numeric(input$anovaPvalTh))
+          
           
           EXP_FIL_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = EXP_FIL
           VG_List[[names(gVars$phTable)[i]]][[as.character(tp)]] = var_genes
@@ -554,10 +553,17 @@ shinyServer(function(input, output, session) {
                                       dc = gVars$doseColID, 
                                       sc = gVars$sampleColID)
         
+        EXP_FIL_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = c()
+        VG_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = c()
+        NVG_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = c()
+        PValMat_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = c()
+        
+        
         c(EXP_FIL, var_genes, not_var_genes,PValMat) %<-% filter_anova(exp_data=gVars$inputGx, 
                                                                        pvalues_genes=pvalues_genes, 
                                                                        adj.pval = input$adjBool, 
                                                                        p.th=as.numeric(input$anovaPvalTh))
+        
         EXP_FIL_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = EXP_FIL
         VG_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = var_genes
         NVG_List[[names(gVars$phTable)[i]]][[as.character(input$time_point_id)]] = not_var_genes
@@ -595,17 +601,18 @@ shinyServer(function(input, output, session) {
       need(!is.null(gVars$EXP_FIL), "No Phenotype File Provided!")
     )
     
-    print("BMD")
+    shinyjs::html(id="loadingText", "COMPUTING BMD")
+    shinyjs::show(id="loading-content")
     
+    
+
     withProgress(message = 'Running BMD', detail = paste("Experiment: ",1 ,"/",length(gVars$phTable),sep=""), value = 1, {
     MQ_BMDList = list()
-    MQ_BMDListFiltered = list()
-    MQ_BMDListFilteredValues = list()
+    # MQ_BMDListFiltered = list()
+    # MQ_BMDListFilteredValues = list()
     
     for(j in 1:length(gVars$phTable)){
-      print("this is the j ----> ")
-      print(j)
-      
+
       pTable = gVars$phTable[[j]]
       timep = as.numeric(names(gVars$EXP_FIL[[j]]))#unique(pTable[,gVars$TPColID])
       print(timep)
@@ -614,33 +621,150 @@ shinyServer(function(input, output, session) {
       minDose = min(as.numeric(unique(gVars$phTable[[j]][,gVars$doseColID])))
       
       for(i in timep){
-
-        print("xxx")
+        print("compute_bmd")
         
-        MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]]  = compute_bmd(exp_data=gVars$EXP_FIL[[names(gVars$phTable)[j]]][[as.character(i)]], pheno_data=gVars$phTable[[names(gVars$phTable)[j]]],
-                              time_t=as.character(i), #interval_type = input$Interval,
-                              tpc = gVars$TPColID, 
-                              dc = gVars$doseColID, 
-                              sc = gVars$sampleColID, sel_mod_list = as.numeric(input$ModGroup),rl = as.numeric(input$RespLev),constantVar = input$constantVar, nCores = as.numeric(input$BMDNCores))
+        # exp_data=gVars$EXP_FIL[[names(gVars$phTable)[j]]][[as.character(i)]]
+        # pheno_data=gVars$phTable[[names(gVars$phTable)[j]]]
+        # time_t=as.character(i)
+        # interval_type = "delta"
+        # tpc = gVars$TPColID
+        # dc = gVars$doseColID
+        # sc = gVars$sampleColID
+        # sel_mod_list = as.numeric(input$ModGroup)
+        # rl = as.numeric(input$RespLev)
+        # conf_interval = as.numeric(input$conf_interval)
+        # constantVar = input$constantVar
+        # nCores = as.numeric(input$BMDNCores)
+        # min_dose = minDose
+        # max_dose = maxDose
+        # max_low_dos_perc_allowd = as.numeric(input$min_dose_perc)
+        # max_max_dos_perc_allowd= as.numeric(input$max_dose_perc)
+        # first_only = input$first_model_AIC
+        # ratio_filter = input$ratio_filter
+        # bmd_bmdl_th = as.numeric(input$bmd_bmdl_th)
+        # bmdu_bmd_th = as.numeric(input$bmdu_bmd_th)
+        # bmdu_bmdl_th = as.numeric(input$bmdu_bmdl_th)
+        # filter_bounds_bmdl_bmdu = FALSE #input$filter_bounds_bmdl_bmdu,
+        # loofth = as.numeric(input$LOOF)
+        
+        print("prova")
+        MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]]  = compute_bmd(exp_data=gVars$EXP_FIL[[names(gVars$phTable)[j]]][[as.character(i)]], 
+                                                                                pheno_data=gVars$phTable[[names(gVars$phTable)[j]]],
+                                                                                strictly_monotonic = input$strictly_monotonic,
+                                                                                time_t=as.character(i), 
+                                                                                interval_type = "delta",
+                                                                                tpc = gVars$TPColID, 
+                                                                                dc = gVars$doseColID, 
+                                                                                sc = gVars$sampleColID, 
+                                                                                sel_mod_list = as.numeric(input$ModGroup),
+                                                                                rl = as.numeric(input$RespLev),
+                                                                                conf_interval = as.numeric(input$conf_interval),
+                                                                                constantVar = input$constantVar, 
+                                                                                nCores = as.numeric(input$BMDNCores),
+                                                                                min_dose = minDose,
+                                                                                max_dose = maxDose,
+                                                                                first_only = input$first_model_AIC,  
+                                                                                loofth = as.numeric(input$LOOF)
+                                                                                # max_low_dos_perc_allowd = as.numeric(input$min_dose_perc), 
+                                                                                # max_max_dos_perc_allowd= as.numeric(input$max_dose_perc), 
+                                                                                # ratio_filter = input$ratio_filter, 
+                                                                                # bmd_bmdl_th = as.numeric(input$bmd_bmdl_th), 
+                                                                                # bmdu_bmd_th = as.numeric(input$bmdu_bmd_th), 
+                                                                                # bmdu_bmdl_th = as.numeric(input$bmdu_bmdl_th),
+                                                                                # filter_bounds_bmdl_bmdu = FALSE, #input$filter_bounds_bmdl_bmdu,
+                                                                                )
 
-        MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]   = BMD_filters(BMDRes = MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]],max_dose = as.numeric(maxDose),min_dose = as.numeric(minDose),max_low_dos_perc_allowd = as.numeric(input$min_dose_perc),max_max_dos_perc_allowd = as.numeric(input$max_dose_perc)  ,loofth = as.numeric(input$LOOF))
-        MQ_BMDListFilteredValues[[names(gVars$phTable)[j]]][[as.character(i)]]  =  MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]$BMDValues_filtered
+        
+
+        # MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]   = BMD_filters(BMDRes = MQ_BMDList[[names(gVars$EXP_FIL)[j]]][[as.character(i)]],max_dose = as.numeric(maxDose),min_dose = as.numeric(minDose),max_low_dos_perc_allowd = as.numeric(input$min_dose_perc),max_max_dos_perc_allowd = as.numeric(input$max_dose_perc)  ,loofth = as.numeric(input$LOOF))
+        # MQ_BMDListFilteredValues[[names(gVars$phTable)[j]]][[as.character(i)]]  =  MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]$BMDValues_filtered
       }
       incProgress(1/length(gVars$phTable), detail = paste("BMD Experiment: ",j+1," Experiment: ",j+1 ,"/",length(gVars$phTable),sep=""))
       
     }
     })
 
+    print("test")
     gVars$MQ_BMD = MQ_BMDList
-    gVars$MQ_BMD_filtered = MQ_BMDListFiltered
-    gVars$MQ_BMDListFilteredValues = MQ_BMDListFilteredValues
-    gVars$MQ_BMD_filtered2 = gVars$MQ_BMD_filtered
+    gVars$MQ_BMD_filtered = NULL#MQ_BMDListFiltered
+    gVars$MQ_BMDListFilteredValues = NULL #MQ_BMDListFilteredValues
+    gVars$MQ_BMD_filtered2 = NULL #gVars$MQ_BMD_filtered
+    
+    
+    on.exit({
+      print("inside on exit")
+      shinyjs::hide(id="loading-content", anim=TRUE, animType="fade")    
+    })
+    
     
     shinyBS::toggleModal(session, "computeBMD", toggle="close")
     shinyBS::updateButton(session, "bmd_button", style="success", icon=icon("check-circle"))
     shinyBS::updateCollapse(session, "bsSidebar1", open="PATHWAY ENRICHMENT", style=list("COMPUTE BMD"="success","PATHWAY ENRICHMENT"="warning"))
     shiny::updateTabsetPanel(session, "display",selected = "BMDTab")
   })
+  
+  observeEvent(input$Apply_filter, {
+    shiny::validate(
+      need(!is.null(gVars$phTable), "No Phenotype File Provided!")
+    )
+    
+    shiny::validate(
+      need(!is.null(gVars$EXP_FIL), "No Phenotype File Provided!")
+    )
+    shiny::validate(
+      need(!is.null(gVars$MQ_BMD), "No BMD computed!")
+    )
+    
+    
+    
+    withProgress(message = 'Running BMD', detail = paste("Experiment: ",1 ,"/",length(gVars$phTable),sep=""), value = 1, {
+      
+      MQ_BMDListFiltered = list()
+      MQ_BMDListFilteredValues = list()
+      
+      for(j in 1:length(gVars$phTable)){
+        
+        pTable = gVars$phTable[[j]]
+        timep = as.numeric(names(gVars$EXP_FIL[[j]]))#unique(pTable[,gVars$TPColID])
+        print(timep)
+        
+        doses_tested = as.numeric(unique(gVars$phTable[[j]][,gVars$doseColID]))
+        maxDose = max(doses_tested[doses_tested>0])
+        minDose = min(doses_tested[doses_tested>0])
+        
+        for(i in timep){
+          
+          print("xxx")
+          
+          MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]   = BMD_filters(BMDRes = gVars$MQ_BMD[[names(gVars$EXP_FIL)[j]]][[as.character(i)]],
+                                                                                           max_dose = as.numeric(maxDose), 
+                                                                                           min_dose = as.numeric(minDose), 
+                                                                                           max_low_dos_perc_allowd =  as.numeric(input$min_dose_perc2), 
+                                                                                           max_max_dos_perc_allowd = as.numeric(input$max_dose_perc2),
+                                                                                           loofth = as.numeric(input$LOOF), 
+                                                                                           ratio_filter = input$ratio_filter2, 
+                                                                                           bmd_bmdl_th = as.numeric(input$bmd_bmdl_th2), 
+                                                                                           bmdu_bmd_th = as.numeric(input$bmdu_bmd_th2), 
+                                                                                           bmdu_bmdl_th = as.numeric(input$bmdu_bmdl_th2),
+                                                                                           filter_bounds_bmdl_bmdu = input$filter_bounds_bmdl_bmdu2)
+          
+          MQ_BMDListFilteredValues[[names(gVars$phTable)[j]]][[as.character(i)]]  =  MQ_BMDListFiltered[[names(gVars$phTable)[j]]][[as.character(i)]]$BMDValues_filtered
+        }
+        incProgress(1/length(gVars$phTable), detail = paste("BMD Experiment: ",j+1," Experiment: ",j+1 ,"/",length(gVars$phTable),sep=""))
+        
+      }
+    })
+    
+    gVars$MQ_BMD_filtered = MQ_BMDListFiltered
+    gVars$MQ_BMDListFilteredValues = MQ_BMDListFilteredValues
+    gVars$MQ_BMD_filtered2 = gVars$MQ_BMD_filtered
+    
+    # shinyBS::toggleModal(session, "computeBMD", toggle="close")
+    # shinyBS::updateButton(session, "bmd_button", style="success", icon=icon("check-circle"))
+    # shinyBS::updateCollapse(session, "bsSidebar1", open="PATHWAY ENRICHMENT", style=list("COMPUTE BMD"="success","PATHWAY ENRICHMENT"="warning"))
+    shiny::updateTabsetPanel(session, "display",selected = "BMDTab")
+  })
+  
   
   output$upsetplot = renderPlot({
     print(input$range)
@@ -651,11 +775,20 @@ shinyServer(function(input, output, session) {
     #   return(NULL)
     # }
     shiny::validate(
-      need(!is.null(gVars$MQ_BMD_filtered), "No BMD performed!")
+      need(!is.null(gVars$MQ_BMD), "No BMD performed!")
     )
+    
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMDList = gVars$MQ_BMD
+      
+    }else{
+      BMDList = gVars$MQ_BMD_filtered
+    }
     
     GList = list()
     index = 1
+    
+    
     
     for(j in names(gVars$EXP_FIL)){ # for each experiment
       
@@ -664,7 +797,7 @@ shinyServer(function(input, output, session) {
       print(timep)
       
       for(i in timep){
-        BMDFilMat = gVars$MQ_BMD_filtered[[j]][[as.character(i)]]$BMDValues_filtered
+        BMDFilMat = BMDList[[j]][[as.character(i)]][[1]]
         
         genelist = BMDFilMat[,c("Gene","BMD")]
         GList[[paste(j,as.character(i),sep="_")]] = genelist
@@ -674,8 +807,7 @@ shinyServer(function(input, output, session) {
       }   
     }
     
-    #print(input$range)
-    
+
     th1 = input$range[1]/100 #0
     th2 = input$range[2]/100 #10
      
@@ -688,11 +820,6 @@ shinyServer(function(input, output, session) {
       listUpset[[names(GList)[i]]] = as.character(GList[[i]][idx,1])
     }
     
-    # drugs = unlist(lapply(X = strsplit(names(listUpset),split = "_"), FUN = function(elem)elem[1]))
-    # TP = unlist(lapply(X = strsplit(names(listUpset),split = "_"), FUN = function(elem)elem[2]))
-    # 
-    # drcolor = rainbow(length(unique(drugs)))
-    # names(drcolor) = unique(drugs)
     upset(fromList(listUpset),nsets = length(listUpset),nintersects = input$maxInt, group.by = input$groupby,order.by = input$orderby)
    # upset(fromList(listUpset),nsets = length(listUpset),nintersects = 50,group.by = "sets",order.by = "freq")
     
@@ -710,16 +837,13 @@ shinyServer(function(input, output, session) {
         
         return(NULL)
       }
-      print('Thank you for clicking')
-      
+
       shinyjs::html(id="loadingText", "Saving tables")
       shinyjs::show(id="loading-content")
       on.exit({
         print("inside on exit")
         shinyjs::hide(id="loading-content", anim=TRUE, animType="fade")    
       })
-      
-      print("I'm saving anova tables")
       
       write.xlsx(gVars$GList[[1]], file, sheetName = names(gVars$GList)[1], row.names = FALSE) 
       
@@ -732,22 +856,26 @@ shinyServer(function(input, output, session) {
       write.xlsx(gVars$pheno, file, sheetName = "Groups", append = TRUE, row.names = FALSE) 
       
       
-      print("Funmappone input stored!")
     }
   )
   
 
   observeEvent(input$enrichment_analysis, {
+    
     shiny::validate(
-      need(!is.null(gVars$MQ_BMD_filtered), "No BMD performed!")
+      need(!is.null(gVars$MQ_BMD), "No BMD performed!")
     )
+    
+    if(is.null(gVars$MQ_BMD_filtered)){
+      bmd_data = gVars$MQ_BMD
+    }else{
+      bmd_data = gVars$MQ_BMD_filtered
+    }
+    
     shinyjs::html(id="loadingText", "COMPUTING ENRICHMENT")
     shinyjs::show(id="loading-content")
     
-    # thrs = input$filterBMD
-    # print(thrs)
-    
-    print("Enrichment Analysis")
+ 
     nExp = length(gVars$EXP_FIL)
     
     EnrichRes = list()
@@ -764,15 +892,11 @@ shinyServer(function(input, output, session) {
         
         pTable = gVars$phTable[[j]]
         timep = as.numeric(names(gVars$EXP_FIL[[j]]))#unique(pTable[,gVars$TPColID])
-        
-        #timep = unique(pTable[,gVars$TPColID])
+        timep = sort(timep,decreasing = F)
         print(timep)
         
         for(i in timep){
-          BMDFilMat = gVars$MQ_BMD_filtered[[j]][[as.character(i)]]$BMDValues_filtered
-          
-          # tths = quantile(BMDFilMat[,"BMD"],probs = thrs/100)
-          # iidx = which(BMDFilMat[,"BMD"]>=tths[1] & BMDFilMat[,"BMD"]<=tths[2])
+          BMDFilMat = bmd_data[[j]][[as.character(i)]][[1]] # matrix with computed bmd values
           
           genelist = BMDFilMat[,c("Gene","BMD")]
           GList[[paste(j,as.character(i),sep="_")]] = genelist
@@ -787,252 +911,243 @@ shinyServer(function(input, output, session) {
   
       organism = input$organism
       annType = input$idtype
-
+      
         GList = convert_genes(organism = input$organism, GList=GList, annType = input$idtype)
-        Mp = cbind(names(GList),1:length(GList),grouping_experiment,grouping_TP)  #DF[[length(DF)]]
-        #Mp = cbind(names(GList),grouping)  #DF[[length(DF)]]
-        
+        Mp = cbind(names(GList),1:length(GList),grouping_experiment,grouping_TP)
         colnames(Mp) = c("Chemical","Grouping", "Experiment","Timepoint")
         pheno = cbind(Mp[,2],Mp[,1])
-        
-        #save(GList, pheno, file = "funmapponeInput.RData")
-        
+
         gVars$GList = GList
         gVars$pheno = pheno
         gVars$exp_ann = gVars$pheno
-
-        DTa = matrix("",ncol = length(GList),nrow = max(unlist(lapply(GList, FUN = nrow))))
-        for(i in 1:(length(GList))){
-          gli = as.character(GList[[i]][,1])
-          if(length(gli)>0) DTa[1:nrow(GList[[i]]),i]= gli
+      
+      DTa = matrix("",ncol = length(GList),nrow = max(unlist(lapply(GList, FUN = nrow))))
+      for(i in 1:(length(GList))){
+        gli = as.character(GList[[i]][,1])
+        if(length(gli)>0) DTa[1:nrow(GList[[i]]),i]= gli
+      }
+      
+      colnames(DTa) = names(GList)
+      
+      if(is.null(DTa)){
+        gVars$DATA = NULL
+      }else{
+        gVars$DATA = DTa
+      }
+      
+      gVars$toPlot <- NULL # refresh plot map in the Plot Maps tab
+      gVars$clust_mat <- NULL
+      gVars$KEGG_MAT <- NULL
+      
+      DAT = gVars$DATA   
+      if(input$organism == "Mouse"){          
+        org = "mmu"
+        reactome_hierarchy = mm_reactome_hierarchy
+        reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
+        org_enrich = "mmusculus"
+        reactome_hierarchy[,1] = mouse_map[reactome_hierarchy[,1],2]
+        reactome_hierarchy[,2] = mouse_map[unlist(reactome_hierarchy[,2]),2]
+        reactome_hierarchy[,3] = mouse_map[unlist(reactome_hierarchy[,3]),2]
+      }
+      if(input$organism == "Human"){
+        org = "hsa"
+        reactome_hierarchy = hm_reactome_hierarchy
+        reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
+        reactome_hierarchy[,1] = human_map[reactome_hierarchy[,1],2]
+        reactome_hierarchy[,2] = human_map[unlist(reactome_hierarchy[,2]),2]
+        reactome_hierarchy[,3] = human_map[unlist(reactome_hierarchy[,3]),2]
+        org_enrich = "hsapiens"
+      }
+      if(input$organism == "Rat"){
+        org = "Rat"
+        reactome_hierarchy = rat_reactome_hierarchy
+        reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
+        reactome_hierarchy[,1] = rat_map[reactome_hierarchy[,1],2]
+        reactome_hierarchy[,2] = rat_map[unlist(reactome_hierarchy[,2]),2]
+        reactome_hierarchy[,3] = rat_map[unlist(reactome_hierarchy[,3]),2]
+        org_enrich = "rnorvegicus"
+        
+      }
+      
+      ####### remove reactome duplicates
+      reactome_hierarchy=unique(reactome_hierarchy)
+      
+      # Compute enrichment
+      annType = input$EnrichType
+      GOType = input$GOType
+      
+      if(annType=="KEGG"){
+        gVars$hierarchy = kegg_hierarchy
+        type_enrich = "KEGG"
+      }
+      if(annType=="REACTOME"){
+        type_enrich = "REAC"
+        gVars$hierarchy = reactome_hierarchy
+      }
+      if(annType=="GO"){
+        if(GOType == "BP"){
+          #create geograph object
+          makeGOGraph(ont = "bp") -> geograph
+          #convert graphNEL into igraph
+          igraph.from.graphNEL(geograph) -> igraphgeo
+          #make igraph object undirected
+          igraphgeo = as.undirected(igraphgeo)
+          #set root as BP root term
+          root = "GO:0008150"
+          type_enrich = "GO:BP"
         }
-        
-        colnames(DTa) = names(GList)
-        
-        if(is.null(DTa)){
-          gVars$DATA = NULL
-        }else{
-          gVars$DATA = DTa
+        if(GOType == "CC"){
+          #EnrichDatList = all_GO_CC
+          makeGOGraph(ont = "cc") -> geograph
+          igraph.from.graphNEL(geograph) -> igraphgeo
+          igraphgeo = as.undirected(igraphgeo)
+          root="GO:0005575"
+          type_enrich = "GO:CC"
         }
-
-        gVars$toPlot <- NULL # refresh plot map in the Plot Maps tab
-        gVars$clust_mat <- NULL
-        gVars$KEGG_MAT <- NULL
-        
-        DAT = gVars$DATA   
-        if(input$organism == "Mouse"){          
-          org = "mmu"
-          reactome_hierarchy = mm_reactome_hierarchy
-          reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
-          org_enrich = "mmusculus"
-          reactome_hierarchy[,1] = mouse_map[reactome_hierarchy[,1],2]
-          reactome_hierarchy[,2] = mouse_map[unlist(reactome_hierarchy[,2]),2]
-          reactome_hierarchy[,3] = mouse_map[unlist(reactome_hierarchy[,3]),2]
+        if(GOType == "MF"){
+          #EnrichDatList = all_GO_MF
+          makeGOGraph(ont = "mf") -> geograph
+          igraph.from.graphNEL(geograph) -> igraphgeo
+          igraphgeo = as.undirected(igraphgeo)
+          root="GO:0003674"
+          type_enrich = "GO:MF"
         }
-        if(input$organism == "Human"){
-          org = "hsa"
-          reactome_hierarchy = hm_reactome_hierarchy
-          reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
-          reactome_hierarchy[,1] = human_map[reactome_hierarchy[,1],2]
-          reactome_hierarchy[,2] = human_map[unlist(reactome_hierarchy[,2]),2]
-          reactome_hierarchy[,3] = human_map[unlist(reactome_hierarchy[,3]),2]
-          org_enrich = "hsapiens"
+      }
+      
+      GL = gVars$GList
+      pval = as.numeric(input$pvalueTh)
+      adjust_method = input$pcorrection
+      org = org_enrich
+      type = type_enrich
+      print("Before enrichment")
+      
+      if(input$pcorrection == "none"){ 
+        print("Nominal PValue")
+        #as.numeric(input$pvalueTh)
+        EnrichDatList = lapply(gVars$GList,enrich,type_enrich,org_enrich,1,"bonferroni", sig = FALSE, mis = as.numeric(input$min_intersection), only_annotated=input$only_annotated)
+        for(i in 1:length(EnrichDatList)){
+          ERi = EnrichDatList[[i]]
+          ERi$pValueAdj = ERi$pValueAdj / length(ERi$pValueAdj)
+          ERi$pValue = ERi$pValue / length(ERi$pValue)
+          EnrichDatList[[i]] = ERi
         }
-        if(input$organism == "Rat"){
-          org = "Rat"
-          reactome_hierarchy = rat_reactome_hierarchy
-          reactome_hierarchy$ID = unlist(reactome_hierarchy$Pathway)
-          reactome_hierarchy[,1] = rat_map[reactome_hierarchy[,1],2]
-          reactome_hierarchy[,2] = rat_map[unlist(reactome_hierarchy[,2]),2]
-          reactome_hierarchy[,3] = rat_map[unlist(reactome_hierarchy[,3]),2]
-          org_enrich = "rnorvegicus"
-          
-        }
+      }else{
+        EnrichDatList = lapply(gVars$GList,enrich,type_enrich,org_enrich,as.numeric(input$pvalueTh),input$pcorrection, sig = TRUE, mis = as.numeric(input$min_intersection),only_annotated=input$only_annotated)
+      }
+      
+      gVars$EnrichDatList = EnrichDatList
+      
+      print("After enrichment")
+      
+      if(input$EnrichType == "GO"){
+        #find the list of term into  the enriched list
+        #res2 = filterGO(EnrichDatList,go_type = GOType)
         
-        ####### remove reactome duplicates
-        reactome_hierarchy=unique(reactome_hierarchy)
+        res2 = filterGO(EnrichDatList,go_type = input$GOType)
+        EnrichDatList = res2$EnrichDatList
+        go_terms = res2$goTerm
+        print("compute GO hierarchy")
         
-        # Compute enrichment
-        annType = input$EnrichType
-        GOType = input$GOType
+        #Compute all the shortest path between the root to the go_terms
+        asp = all_shortest_paths(graph = igraphgeo,from = root, to = go_terms)
         
-        if(annType=="KEGG"){
-          gVars$hierarchy = kegg_hierarchy
-          type_enrich = "KEGG"
-        }
-        if(annType=="REACTOME"){
-          type_enrich = "REAC"
-          gVars$hierarchy = reactome_hierarchy
-        }
-        if(annType=="GO"){
-          if(GOType == "BP"){
-            #create geograph object
-            makeGOGraph(ont = "bp") -> geograph
-            #convert graphNEL into igraph
-            igraph.from.graphNEL(geograph) -> igraphgeo
-            #make igraph object undirected
-            igraphgeo = as.undirected(igraphgeo)
-            #set root as BP root term
-            root = "GO:0008150"
-            type_enrich = "GO:BP"
-          }
-          if(GOType == "CC"){
-            #EnrichDatList = all_GO_CC
-            makeGOGraph(ont = "cc") -> geograph
-            igraph.from.graphNEL(geograph) -> igraphgeo
-            igraphgeo = as.undirected(igraphgeo)
-            root="GO:0005575"
-            type_enrich = "GO:CC"
-          }
-          if(GOType == "MF"){
-            #EnrichDatList = all_GO_MF
-            makeGOGraph(ont = "mf") -> geograph
-            igraph.from.graphNEL(geograph) -> igraphgeo
-            igraphgeo = as.undirected(igraphgeo)
-            root="GO:0003674"
-            type_enrich = "GO:MF"
-          }
-        }
+        #reduce the shortest path to length 3 to build a 3 level hierarchy
+        go_hierarchy = matrix("",nrow = length(asp$res),ncol = 3)
         
-        GL = gVars$GList
-        pval = as.numeric(input$pvalueTh)
-        adjust_method = input$pcorrection
-        org = org_enrich
-        type = type_enrich
-        print("Before enrichment")
-
-        if(input$pcorrection == "none"){ 
-          print("Nominal PValue")
-          #as.numeric(input$pvalueTh)
-          EnrichDatList = lapply(gVars$GList,enrich,type_enrich,org_enrich,1,"bonferroni", sig = FALSE, mis = as.numeric(input$min_intersection), only_annotated=input$only_annotated)
-          for(i in 1:length(EnrichDatList)){
-            ERi = EnrichDatList[[i]]
-            ERi$pValueAdj = ERi$pValueAdj / length(ERi$pValueAdj)
-            ERi$pValue = ERi$pValue / length(ERi$pValue)
-            EnrichDatList[[i]] = ERi
-          }
-        }else{
-          EnrichDatList = lapply(gVars$GList,enrich,type_enrich,org_enrich,as.numeric(input$pvalueTh),input$pcorrection, sig = TRUE, mis = as.numeric(input$min_intersection),only_annotated=input$only_annotated)
-        }
-        
-        gVars$EnrichDatList = EnrichDatList
-        
-        print("After enrichment")
-        
-        if(input$EnrichType == "GO"){
-          #find the list of term into  the enriched list
-          #res2 = filterGO(EnrichDatList,go_type = GOType)
-          
-          res2 = filterGO(EnrichDatList,go_type = input$GOType)
-          EnrichDatList = res2$EnrichDatList
-          go_terms = res2$goTerm
-          print("compute GO hierarchy")
-          
-          #Compute all the shortest path between the root to the go_terms
-          asp = all_shortest_paths(graph = igraphgeo,from = root, to = go_terms)
-          
-          #reduce the shortest path to length 3 to build a 3 level hierarchy
-          go_hierarchy = matrix("",nrow = length(asp$res),ncol = 3)
-          
-          for(i in 1:length(asp$res)){
-            nn = names(asp$res[[i]])
-            nn = nn[2:length(nn)]
-            if(length(nn)<3){
-              nn2 = rep(nn[length(nn)],3)
-              nn2[1:length(nn)] = nn
-            }else{
-              nn2 = c(nn[1:2],nn[length(nn)])
-            }
-            go_hierarchy[i,] =nn2   
-          }
-          
-          go_hierarchy = unique(go_hierarchy)
-          colnames(go_hierarchy) = c("level1","level2","level3")
-          go_hierarchy = as.data.frame(go_hierarchy)
-          go_hierarchy$ID = go_hierarchy[,3]
-          
-          idx = which(is.na(go_hierarchy[,1]))
-          if(length(idx)>0){
-            go_hierarchy = go_hierarchy[-idx,]
-          }
-          go_hierarchy[,1] = Term(GOTERM[as.character(go_hierarchy[,1])])
-          go_hierarchy[,2] = Term(GOTERM[as.character(go_hierarchy[,2])])
-          go_hierarchy[,3] = Term(GOTERM[as.character(go_hierarchy[,3])])
-          
-          # colnames(hier_names) = c("Level1","Level2","Pathway")
-          gVars$hierarchy = go_hierarchy
-          print(gVars$hierarchy)
-          
-        }
-        
-        print(head(gVars$hierarchy))
-        
-        NCol = ncol(gVars$GList[[1]])
-        print("NCol -------- >>>>> ")
-        print(NCol)
-        
-        #if(input$fileType %in% "GenesOnly"){
-        if(input$MapValueType == "PVAL"){
-          print("only genes")
-          M = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
-        }else{
-          
-          if(NCol==1){
-            shinyjs::info("No Modification provided! Enrichment will be performed by using only pvalues")
-            M = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
-            
+        for(i in 1:length(asp$res)){
+          nn = names(asp$res[[i]])
+          nn = nn[2:length(nn)]
+          if(length(nn)<3){
+            nn2 = rep(nn[length(nn)],3)
+            nn2[1:length(nn)] = nn
           }else{
-            M1 = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
-            M2 = kegg_mat_fc(EnrichDatList = EnrichDatList,hierarchy = gVars$hierarchy,GList = gVars$GList, summ_fun=get(input$aggregation))
-            
-            print("LOGGGGG")
-            
-            # if(input$MapValueType == "PVAL"){
-            #   M = M1
-            # }
-            if(input$MapValueType == "FC"){
-              M = M2
-            }
-            if(input$MapValueType == "FCPV"){
-              M = M2 * -log(M1)
-            }
-            rownames(M) = rownames(M1)
-            colnames(M) = colnames(M1)
+            nn2 = c(nn[1:2],nn[length(nn)])
           }
+          go_hierarchy[i,] =nn2   
+        }
+        
+        go_hierarchy = unique(go_hierarchy)
+        colnames(go_hierarchy) = c("level1","level2","level3")
+        go_hierarchy = as.data.frame(go_hierarchy)
+        go_hierarchy$ID = go_hierarchy[,3]
+        
+        idx = which(is.na(go_hierarchy[,1]))
+        if(length(idx)>0){
+          go_hierarchy = go_hierarchy[-idx,]
+        }
+        go_hierarchy[,1] = Term(GOTERM[as.character(go_hierarchy[,1])])
+        go_hierarchy[,2] = Term(GOTERM[as.character(go_hierarchy[,2])])
+        go_hierarchy[,3] = Term(GOTERM[as.character(go_hierarchy[,3])])
+        
+        # colnames(hier_names) = c("Level1","Level2","Pathway")
+        gVars$hierarchy = go_hierarchy
+        print(gVars$hierarchy)
+        
+      }
+      
+      print(head(gVars$hierarchy))
+      
+      NCol = ncol(gVars$GList[[1]])
+      print("NCol -------- >>>>> ")
+      print(NCol)
+      
+      #if(input$fileType %in% "GenesOnly"){
+      if(input$MapValueType == "PVAL"){
+        print("only genes")
+        M = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
+      }else{
+        
+        if(NCol==1){
+          shinyjs::info("No Modification provided! Enrichment will be performed by using only pvalues")
+          M = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
           
+        }else{
+          M1 = kegg_mat_p(EnrichDatList,hierarchy = gVars$hierarchy)
+          M2 = kegg_mat_fc(EnrichDatList = EnrichDatList,hierarchy = gVars$hierarchy,GList = gVars$GList, summ_fun=get(input$aggregation))
+          
+          print("LOGGGGG")
+          
+          # if(input$MapValueType == "PVAL"){
+          #   M = M1
+          # }
+          if(input$MapValueType == "FC"){
+            M = M2
+          }
+          if(input$MapValueType == "FCPV"){
+            M = M2 * -log(M1)
+          }
+          rownames(M) = rownames(M1)
+          colnames(M) = colnames(M1)
         }
         
-        gVars$KEGG_MAT = M
-        
-        hierarchy <- collapse_paths(kegg_hierarchy =gVars$hierarchy,kegg_mat_cell = gVars$KEGG_MAT, collapse_level = 3)
-        mat <- hierarchy[[1]]
-        hier <- hierarchy[[2]]
-        
-        print(hier)
-        
-        gVars$lev1_h = as.list(c("All",unique(as.character(hier[,1]))))
-        
-        gVars$lev2_h = list("All" = "All")
-        for(i in unique(hier[,1])){
-          gVars$lev2_h[[i]] = as.character(unique(hier[which(hier[,1] %in% i),2]))
-        }
-        
-        gVars$lev3_h = list("All" = "All")
-        for(i in unique(hier[,2])){
-          gVars$lev3_h[[i]] = as.character(unique(hier[which(hier[,2] %in% i),3]))
-        }
-        
-        # code added here
-        #Compute genes matrix
-        Mgenes <- kegg_mat_genes(EnrichDatList=EnrichDatList, hierarchy=gVars$hierarchy)
-        print("dim(Mgenes)")
-        print(dim(Mgenes))
-        print("str(Mgenes)")
-        print(str(Mgenes))
-        
-        gVars$KEGG_MAT_GENES <- Mgenes
-        
-        
+      }
+      
+      gVars$KEGG_MAT = M
+      
+      hierarchy <- collapse_paths(kegg_hierarchy =gVars$hierarchy,kegg_mat_cell = gVars$KEGG_MAT, collapse_level = 3)
+      mat <- hierarchy[[1]]
+      hier <- hierarchy[[2]]
+      
+      print(hier)
+      
+      gVars$lev1_h = as.list(c("All",unique(as.character(hier[,1]))))
+      
+      gVars$lev2_h = list("All" = "All")
+      for(i in unique(hier[,1])){
+        gVars$lev2_h[[i]] = as.character(unique(hier[which(hier[,1] %in% i),2]))
+      }
+      
+      gVars$lev3_h = list("All" = "All")
+      for(i in unique(hier[,2])){
+        gVars$lev3_h[[i]] = as.character(unique(hier[which(hier[,2] %in% i),3]))
+      }
+      
+      # code added here
+      #Compute genes matrix
+      Mgenes <- kegg_mat_genes(EnrichDatList=EnrichDatList, hierarchy=gVars$hierarchy)
+      
+      gVars$KEGG_MAT_GENES <- Mgenes
+      
         on.exit({
           print("inside on exit")
           shinyjs::hide(id="loading-content", anim=TRUE, animType="fade")    
@@ -1160,7 +1275,7 @@ shinyServer(function(input, output, session) {
       paste("bmd_table.xlsx", sep = "")
     },
     content = function(file) {
-      if(length(gVars$MQ_BMD_filtered)==0){ 
+      if(length(gVars$MQ_BMD)==0){ 
         print("No bmd table to save!")
         return(NULL)
       }
@@ -1173,33 +1288,31 @@ shinyServer(function(input, output, session) {
       
       print("I'm saving bmd tables")
       
-      # write.xlsx(gVars$MQ_BMD_filtered[[1]]$BMDValues_filtered, file, sheetName = names(gVars$MQ_BMD_filtered)[1]) 
-      # if(length(gVars$MQ_BMD_filtered)>1){
-      #   for(i in 2:length(gVars$MQ_BMD_filtered)){
-      #     if(nrow(gVars$MQ_BMD_filtered[[i]]$BMDValues_filtered)>0){
-      #       write.xlsx(gVars$MQ_BMD_filtered[[i]]$BMDValues_filtered, file, sheetName =  names(gVars$MQ_BMD_filtered)[i], append = TRUE) 
-      #     }
-      #   }
-      # }
-      
+      if(is.null(gVars$MQ_BMD_filtered)){
+        BMDDataList = gVars$MQ_BMD
+        
+      }else{
+        BMDDataList = gVars$MQ_BMD_filtered
+        
+      }
       
       firstCall = TRUE
 
-      for(exp in names(gVars$MQ_BMD_filtered)){
+      for(exp in names(BMDDataList)){
         print(exp)
-        times = names(gVars$MQ_BMD_filtered[[exp]])
+        times = names(BMDDataList[[exp]])
         for(tp in times){
           print(tp)
           if(firstCall){
-            if(nrow(gVars$MQ_BMD_filtered[[exp]][[tp]]$BMDValues_filtered)>0){
-              write.xlsx(gVars$MQ_BMD_filtered[[exp]][[tp]]$BMDValues_filtered, file, sheetName = paste(exp,tp,sep = "_"), append = FALSE)
+            if(nrow(BMDDataList[[exp]][[tp]][[1]])>0){
+              write.xlsx(BMDDataList[[exp]][[tp]][[1]], file, sheetName = paste(exp,tp,sep = "_"), append = FALSE)
               xlcFreeMemory()
               firstCall = FALSE
               print("first")
             }
           }else{
-            if(nrow(gVars$MQ_BMD_filtered[[exp]][[tp]]$BMDValues_filtered)>0){
-              write.xlsx(gVars$MQ_BMD_filtered[[exp]][[tp]]$BMDValues_filtered, file, sheetName = paste(exp,tp,sep = "_"), append = TRUE)
+            if(nrow(BMDDataList[[exp]][[tp]][[1]])>0){
+              write.xlsx(BMDDataList[[exp]][[tp]][[1]], file, sheetName = paste(exp,tp,sep = "_"), append = TRUE)
               xlcFreeMemory()
               print("appending")
             }
@@ -1329,8 +1442,14 @@ shinyServer(function(input, output, session) {
       exper = strsplit(x = elemn, split = "_")[[1]][1]
       timep = strsplit(x = elemn, split = "_")[[1]][2]
       
-      BMDFilMat = gVars$MQ_BMD_filtered[[exper]][[as.character(timep)]]$BMDValues_filtered #filtered BMD genes
-      
+      if(is.null(gVars$MQ_BMD_filtered)){
+        BMDFilMat = gVars$MQ_BMD[[exper]][[as.character(timep)]]$BMDValues #filtered BMD genes
+        
+      }else{
+        BMDFilMat = gVars$MQ_BMD_filtered[[exper]][[as.character(timep)]]$BMDValues_filtered #filtered BMD genes
+        
+      }
+
       if(!is.null(BMDFilMat) & nrow(ERi)>0){
         
         for(npat in 1:nrow(ER[[i]])){
@@ -1397,7 +1516,12 @@ shinyServer(function(input, output, session) {
       exper = strsplit(x = elemn, split = "_")[[1]][1]
       timep = strsplit(x = elemn, split = "_")[[1]][2]
       
-      BMDFilMat = gVars$MQ_BMD_filtered[[exper]][[as.character(timep)]]$BMDValues_filtered #filtered BMD genes
+      if(is.null(gVars$MQ_BMD_filtered)){
+        BMDFilMat = gVars$MQ_BMD[[exper]][[as.character(timep)]]$BMDValues #filtered BMD genes
+      }else{
+        BMDFilMat = gVars$MQ_BMD_filtered[[exper]][[as.character(timep)]]$BMDValues_filtered #filtered BMD genes
+      }
+      
       if(!is.null(BMDFilMat) & nrow(ERi)>0){
    
           for(npat in 1:nrow(ER[[i]])){
@@ -1430,8 +1554,7 @@ shinyServer(function(input, output, session) {
     PD$logPval = -log(PD$Adj.pval)
     PD$NGenes = as.numeric(as.vector(PD$NGenes))
     gVars$MeanBMDTimePoint = PD
-    #save(PD, file = "../pathway_bubble.RData")
-    
+
     p <- PD %>%
      ggplot(aes(MeanBMD,logPval, label = FunCategory, color = LevName, size = NGenes)) + # color=FunCategory
       geom_point() +
@@ -1453,8 +1576,6 @@ shinyServer(function(input, output, session) {
       return(NULL)
     }
     
-    print("xyz")
-    
     selectedrowindex = input$PAT_table_rows_selected[length(input$PAT_table_rows_selected)]
     selectedrowindex = as.numeric(selectedrowindex)
     
@@ -1464,10 +1585,14 @@ shinyServer(function(input, output, session) {
     
     exp_tp = unlist(strsplit(input$time_point_id_visualPat,"_"))
     
-    BMDFilMat = gVars$MQ_BMD_filtered[[exp_tp[1]]][[exp_tp[2]]]$BMDValues_filtered
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMDFilMat = gVars$MQ_BMD[[exp_tp[1]]][[exp_tp[2]]]$BMDValues
+      
+    }else{
+      BMDFilMat = gVars$MQ_BMD_filtered[[exp_tp[1]]][[exp_tp[2]]]$BMDValues_filtered
+      
+    }
     
-    
-    #BMDFilMat = gVars$MQ_BMD_filtered[[input$time_point_id_visualPat]]$BMDValues_filtered
     gi = unlist(strsplit(x = ER[input$PAT_table_rows_selected,2],split = ","))
     idx = which(tolower(BMDFilMat[,1])%in% tolower(gi))
     BMD = as.numeric(BMDFilMat[idx,"BMD"])
@@ -1476,25 +1601,22 @@ shinyServer(function(input, output, session) {
     
     names(BMD) = BMDFilMat[idx,"Gene"]
     names(BMDL) = names(BMDU) = names(BMD)
-    print("plotto un pathwayyyyyyyy - >>>>>>>>>> ")
-    print(BMD)
-    #save(selectedrowindex,ER,BMDFilMat, gi, idx, BMD, BMDL, BMDU, file = "../path_plot.RData")
     
-    #BMD = sort(BMD, decreasing = F)
-    
+
     BMD = data.frame(gene = names(BMD), bmd = BMD, bmdl = BMDL, bmdu = BMDU)
     BMD = BMD[order(BMD$bmd),]
     BMD$gene = factor(x = BMD$gene, levels = BMD$gene)
     
+
     p = ggplot(data=BMD, aes(x=gene, y=bmd, group=1, label1 = bmdl, label2 = bmdu)) +
       geom_line()+
       geom_point() +
       geom_ribbon(aes(ymin=BMD$bmdl, ymax=BMD$bmdu), linetype=2, alpha=0.1) +
       labs(y = "BMDL - BMD - BMDU", x = "Gene")
       
+    gVars$BMD_dist_in_path = p
     ggplotly(p)
-    #plot(BMD, type = "l")
-    
+
   })
   
   output$PAT_table = DT::renderDataTable({
@@ -1502,7 +1624,6 @@ shinyServer(function(input, output, session) {
     #   print("Null BMD")
     #   return(NULL)
     # }
-    print("ciao")
     if((input$time_point_id_visualPat %in% names(gVars$EnrichDatList))==FALSE){
       print("No enrichment for this TP")
       return(NULL)
@@ -1510,6 +1631,7 @@ shinyServer(function(input, output, session) {
 
     PATWAY_tab <- gVars$EnrichDatList[[input$time_point_id_visualPat]]
     PATWAY_tab = PATWAY_tab[,c(1,3,4,5)]
+    gVars$PATWAY_tab=PATWAY_tab
     DT::datatable(PATWAY_tab, filter="top",
                   options = list(
                     search = list(regex=TRUE, caseInsensitive=FALSE),
@@ -1522,25 +1644,29 @@ shinyServer(function(input, output, session) {
   
 
   output$BMD_BMDL = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
-    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }    
     #BMD_tab <- gVars$MQ_BMD_filtered#[[input$time_point_id_visual2]]$BMDValues_filtered
     #save(BMD_tab, file="BMD_table.RData")
     
     DF = c()
     for(i in 1:length(BMD_tab)){ # for each time point
-      print(BMD_tab[[i]]$BMDValues_filtered)
-      if(!is.null(BMD_tab[[i]]$BMDValues_filtered)){
-        if(nrow(BMD_tab[[i]]$BMDValues_filtered)>=1){
+      print(BMD_tab[[i]][[1]])
+      if(!is.null(BMD_tab[[i]][[1]])){
+        if(nrow(BMD_tab[[i]][[1]])>=1){
           DF = rbind(DF, cbind(names(BMD_tab)[i],
-                           BMD_tab[[i]]$BMDValues_filtered[,"BMD"],
-                           BMD_tab[[i]]$BMDValues_filtered[,"BMDL"],
-                           as.character(BMD_tab[[i]]$BMDValues_filtered[,"MOD_NAME"])))
+                           BMD_tab[[i]][[1]][,"BMD"],
+                           BMD_tab[[i]][[1]][,"BMDL"],
+                           as.character(BMD_tab[[i]][[1]][,"MOD_NAME"])))
         }
       }
     }
@@ -1558,6 +1684,7 @@ shinyServer(function(input, output, session) {
     p = ggplot(DF, aes(x=BMDL, y=BMD, color = MOD_NAME)) +
       geom_point(shape=1) +  facet_grid(. ~ TimePoint)
     
+    gVars$BMD_BMDL = p
     ggplotly(p)
     # ggplot(data=DF, aes(Model)) + 
     #   geom_histogram()+  facet_grid(. ~ TimePoint)
@@ -1565,19 +1692,24 @@ shinyServer(function(input, output, session) {
   })
   
   output$BMD_dist_models = renderPlot({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }
     
     DF = c()
     for(i in 1:length(BMD_tab)){ # for each time point
-      print(BMD_tab[[i]]$BMDValues_filtered)
-      if(!is.null(BMD_tab[[i]]$BMDValues_filtered)){
-        if(nrow((BMD_tab[[i]]$BMDValues_filtered))>=1){
-          xx = cbind(names(BMD_tab)[i],as.character(BMD_tab[[i]]$BMDValues_filtered[,"MOD_NAME"]))
+      print(BMD_tab[[i]][[1]])
+      if(!is.null(BMD_tab[[i]][[1]])){
+        if(nrow((BMD_tab[[i]][[1]]))>=1){
+          xx = cbind(names(BMD_tab)[i],as.character(BMD_tab[[i]][[1]][,"MOD_NAME"]))
           print(xx)
           DF = rbind(DF, xx)
         }
@@ -1600,30 +1732,36 @@ shinyServer(function(input, output, session) {
     #save(DF, file = "../mod_hist.RData")
     
     print(head(DF))
-    ggplot(data=DF, aes(x = "", y = Freq, fill = Model)) + geom_bar(width = 1, stat = "identity") + 
+    p=ggplot(data=DF, aes(x = "", y = Freq, fill = Model)) + geom_bar(width = 1, stat = "identity") + 
       coord_polar("y", start=0)    +  facet_grid(. ~ TimePoint)
       #geom_histogram()+  facet_grid(. ~ TimePoint)
-    
+    gVars$BMD_dist_models = p
+    p
   })
   
   output$BMD_BMDL_BMDU_by_model = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
     
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
-
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }
+    
     DF = c()
     for(i in 1:length(BMD_tab)){ # for each time point
-      print(BMD_tab[[i]]$BMDValues_filtered)
-      if(!is.null(BMD_tab[[i]]$BMDValues_filtered)){
-        if(nrow(BMD_tab[[i]]$BMDValues_filtered)>=1){
+      # print(BMD_tab[[i]]$BMDValues_filtered)
+      if(!is.null(BMD_tab[[i]][[1]])){
+        if(nrow(BMD_tab[[i]][[1]])>=1){
           
-          mi = rbind(cbind(names(BMD_tab)[i],BMD_tab[[i]]$BMDValues_filtered[,"BMD"],   as.character(BMD_tab[[i]]$BMDValues_filtered[,"MOD_NAME"]),"BMD"),
-                     cbind(names(BMD_tab)[i],BMD_tab[[i]]$BMDValues_filtered[,"BMDL"],  as.character(BMD_tab[[i]]$BMDValues_filtered[,"MOD_NAME"]),"BMDL"),
-                     cbind(names(BMD_tab)[i],BMD_tab[[i]]$BMDValues_filtered[,"BMDU"],  as.character(BMD_tab[[i]]$BMDValues_filtered[,"MOD_NAME"]), "BMDU"))
+          mi = rbind(cbind(names(BMD_tab)[i],BMD_tab[[i]][[1]][,"BMD"],   as.character(BMD_tab[[i]][[1]][,"MOD_NAME"]),"BMD"),
+                     cbind(names(BMD_tab)[i],BMD_tab[[i]][[1]][,"BMDL"],  as.character(BMD_tab[[i]][[1]][,"MOD_NAME"]),"BMDL"),
+                     cbind(names(BMD_tab)[i],BMD_tab[[i]][[1]][,"BMDU"],  as.character(BMD_tab[[i]][[1]][,"MOD_NAME"]), "BMDU"))
           
           DF = rbind(DF, mi)
         }
@@ -1641,23 +1779,29 @@ shinyServer(function(input, output, session) {
     p = ggplot(DF, aes(x=Model, y=Value, fill = ValueType)) + geom_boxplot(width=0.5) +facet_grid(. ~ TimePoint)
     ggplotly(p) %>%layout(boxmode = "group")
     
+    gVars$BMD_BMDL_BMDU_by_model = p
   })
   
   output$BMD_dist_TP = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
-    print("in BMD_dist_TP --------------------->>>>>>>>>>>>>>>>>>>>>")
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+  
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }
 
     DF = c()
     for(i in 1:length(BMD_tab)){
-      print(BMD_tab[[i]]$BMDValues_filtered)
+      print(BMD_tab[[i]][[1]])
       
-      if(!is.null(BMD_tab[[i]]$BMDValues_filtered)){
-        if(nrow(BMD_tab[[i]]$BMDValues_filtered)>=1){
-          xx = cbind(names(BMD_tab)[i],BMD_tab[[i]]$BMDValues_filtered[,"BMD"])
+      if(!is.null(BMD_tab[[i]][[1]])){
+        if(nrow(BMD_tab[[i]][[1]])>=1){
+          xx = cbind(names(BMD_tab)[i],BMD_tab[[i]][[1]][,"BMD"])
           print(xx)
           DF = rbind(DF, xx)
         }
@@ -1685,21 +1829,28 @@ shinyServer(function(input, output, session) {
         geom_density(alpha = .2, fill="#FF6655") +
         facet_grid(. ~ TimePoint)
 
+    gVars$BMD_dist_TP = p
     ggplotly(p)
   })
   
   output$BMD_pval_fitting = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }    
     
     DF = c()
     for(i in 1:length(BMD_tab)){
-      if(!is.null(BMD_tab[[i]]$BMDValues_filtered)){
-        if(nrow(BMD_tab[[i]]$BMDValues_filtered)>=1){
-          DF = rbind(DF, cbind(names(BMD_tab)[i],BMD_tab[[i]]$BMDValues_filtered[,"LOFPVal"]))
+      if(!is.null(BMD_tab[[i]][[1]])){
+        if(nrow(BMD_tab[[i]][[1]])>=1){
+          DF = rbind(DF, cbind(names(BMD_tab)[i],BMD_tab[[i]][[1]][,"LOFPVal"]))
         }
       }
     }
@@ -1713,21 +1864,30 @@ shinyServer(function(input, output, session) {
       geom_density(alpha = .2, fill="#FF6655") +
       facet_grid(. ~ TimePoint)
     
+    gVars$BMD_pval_fitting = p
+    
     ggplotly(p)
   })
     
   output$NGTime = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
+    # BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }    
+    
     
     GL = list()
     NG = c()
     for(i in 1:length(BMD_tab)){
-      BMD_tab2 <- BMD_tab[[i]]$BMDValues_filtered
+      BMD_tab2 <- BMD_tab[[i]][[1]]
       if(!is.null(BMD_tab2) & nrow(BMD_tab2)>0){
         GL[[names(BMD_tab)[i]]] =  BMD_tab2[,"Gene"]
         NG = rbind(NG, c(names(BMD_tab)[i], nrow(BMD_tab2)))
@@ -1745,18 +1905,22 @@ shinyServer(function(input, output, session) {
       geom_bar(stat="identity")
     
     ggplotly(p)
-    
+    gVars$NGTime = p
   })
   
   
   output$gene_bmd_plot = renderPlotly({
-    if(is.null(gVars$MQ_BMD_filtered)){ return(NULL) }
+    if(is.null(gVars$MQ_BMD)){ return(NULL) }
     if(is.null(input$geneClust)) {return(NULL)}
     if(is.null(input$intersectionName)) {return(NULL)}
     
     print("gene_bmd_plot")
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
-
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    } 
     if(length(BMD_tab)>1){
       
       c(GL, ItemsList) %<-%  venn_diagram_bmd_genes_across_time_point(BMD_tab)
@@ -1776,17 +1940,22 @@ shinyServer(function(input, output, session) {
           geom_point() + facet_grid(~Cluster)
       }
       
+      gVars$gene_bmd_plot = p
       ggplotly(p)
     }
   })
   
   
   output$nclustvenn <- renderUI({
-    if(is.null(gVars$MQ_BMD_filtered)){ return(NULL) }
+    if(is.null(gVars$MQ_BMD)){ return(NULL) }
     print("nclustvenn")
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
-    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }     
     
     if(length(BMD_tab)>1){
       c(GL, ItemsList) %<-%  venn_diagram_bmd_genes_across_time_point(BMD_tab)
@@ -1804,11 +1973,15 @@ shinyServer(function(input, output, session) {
   })
   
   output$intersectionNameUI <- renderUI({
-    if(is.null(gVars$MQ_BMD_filtered)){ return(NULL) }
+    if(is.null(gVars$MQ_BMD)){ return(NULL) }
     print("intersectionNameUI")
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
-    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }     
     
     if(length(BMD_tab)>1){
       c(GL, ItemsList) %<-%  venn_diagram_bmd_genes_across_time_point(BMD_tab)
@@ -1823,10 +1996,14 @@ shinyServer(function(input, output, session) {
   
   
   output$VennDF = DT::renderDataTable({
-    if(is.null(gVars$MQ_BMD_filtered)){ return(NULL) }
+    if(is.null(gVars$MQ_BMD)){ return(NULL) }
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
-    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }     
     
     if(length(BMD_tab)>1){
       c(GL, ItemsList) %<-%  venn_diagram_bmd_genes_across_time_point(BMD_tab)
@@ -1848,11 +2025,14 @@ shinyServer(function(input, output, session) {
   })
 
   output$NGVenn = renderPlot({
-    if(is.null(gVars$MQ_BMD_filtered)){ return(NULL) }
-    print("NGVenn")
+    if(is.null(gVars$MQ_BMD)){ return(NULL) }
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]
-    
+    print(":")
+    if(is.null(gVars$MQ_BMD_filtered)){
+      BMD_tab <- gVars$MQ_BMD[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]]#[[input$time_point_id_visual2]]$BMDValues_filtered
+    }     
     
     if(length(BMD_tab)>1){
       c(GL, ItemsList) %<-%  venn_diagram_bmd_genes_across_time_point(BMD_tab)
@@ -1922,6 +2102,8 @@ shinyServer(function(input, output, session) {
       }
       
       if(length(gVars$PValMat)>1){
+        print("I keep saving enrichment tables")
+        
         for(i in (startI+1):length(gVars$EnrichDatList)){
           if(nrow(gVars$EnrichDatList[[i]])>0){
             write.xlsx(gVars$EnrichDatList[[i]], file, sheetName =  names(gVars$EnrichDatList)[i], append = TRUE) 
@@ -1960,16 +2142,27 @@ shinyServer(function(input, output, session) {
   
   
   output$BMD_table <- DT::renderDataTable({
-    if(is.null(gVars$MQ_BMD_filtered)){ 
+    if(is.null(gVars$MQ_BMD)){ 
       print("Null BMD")
       return(NULL)
     }
-    print("BMD_tab")
- 
-    gVars$MQ_BMD_filtered = gVars$MQ_BMD_filtered2
     
+    print("plot table")
     
-    BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered
+    if(is.null(gVars$MQ_BMD_filtered2)==FALSE){ 
+      gVars$MQ_BMD_filtered = gVars$MQ_BMD_filtered2
+      BMD_tab = gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered
+    }else{
+      BMD_tab = gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues
+      
+    }
+    
+    # print("BMD_tab")
+    # 
+    # gVars$MQ_BMD_filtered = gVars$MQ_BMD_filtered2
+    # 
+    # 
+    # BMD_tab <- gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered
   
     BMD_tab = BMD_tab#[,1:5]
     print("printing BMD table")
@@ -1981,10 +2174,12 @@ shinyServer(function(input, output, session) {
     BMD_tab[,"BMDU"] =  as.numeric(as.vector(BMD_tab[,"BMDU"]))
         
     #save(BMD_tab, file="../BMD_tab.RData")
-    
+    print("plot")
     #DT::datatable(BMD_tab,options = list(pageLength = 5))
     
     BMD_tab
+    
+    # rownames(BMD_tab) = NULL
     
   },selection = "single", server = TRUE)
   
@@ -2016,25 +2211,30 @@ shinyServer(function(input, output, session) {
     selectedrowindex = as.numeric(selectedrowindex)
     print(selectedrowindex)
     
-    BMDVF = gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered
+    if(is.null(gVars$MQ_BMD_filtered2)){ 
+      
+      BMDVF = gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues
+
+    }else{
+      gVars$MQ_BMD_filtered = gVars$MQ_BMD_filtered2
+      BMDVF = gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered
+    }
     
-    geneName = as.character(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"Gene"])
-    geneBMD = as.numeric(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"BMD"])
-    geneBMDL = as.numeric(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"BMDL"])
-    geneBMDU = as.numeric(as.vector(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"BMDU"]))
-    modName = as.character(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"MOD_NAME"])
-    icval = as.numeric(as.vector(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"IC50/EC50"]))
-    decreasing = as.numeric(as.vector(gVars$MQ_BMD_filtered[[input$experiment_bmd]][[input$time_point_id_visual2]]$BMDValues_filtered[selectedrowindex,"Decreasing"]))
+
+    geneName = as.character(as.vector(BMDVF[selectedrowindex,"Gene"]))
+    geneBMD = as.numeric(BMDVF[selectedrowindex,"BMD"])
+    geneBMDL = as.numeric(BMDVF[selectedrowindex,"BMDL"])
+    geneBMDU = as.numeric(as.vector(BMDVF[selectedrowindex,"BMDU"]))
+    modName = as.character(BMDVF[selectedrowindex,"MOD_NAME"])
+    icval = as.numeric(as.vector(BMDVF[selectedrowindex,"IC50/EC50"]))
     
+  
     print(paste("Selected rows --> ", selectedrowindex))
     print(paste("Selected rows gene name--> ", geneName))
     
     #NB: in all three lines I was using 1 before, instead of input$time_point_id_visual
-    print(names(gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$opt_models_list))
-    print(geneName %in% names(gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$opt_models_list))
-    
-    #Select mod to plot
-    modToPlot = gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$opt_models_list[[geneName]]$opt_mod
+     #Select mod to plot
+    modToPlot = gVars$MQ_BMD[[input$experiment_bmd]][[input$time_point_id_visual2]]$opt_models_list[[geneName]]$model
    # modToPlot = fm$CD163$opt_mod
     print("Class optimal model ------------------>>>>>>>>>>>>>>> ")
     class(modToPlot)
@@ -2114,6 +2314,8 @@ shinyServer(function(input, output, session) {
         scale_colour_manual(name="Values",
                             values=c(BMDL="red", BMD="blue", BMDU="green"))
      }
+    
+    gVars$plotted_gene = ggp
     ggp
 
   })
@@ -2601,7 +2803,6 @@ shinyServer(function(input, output, session) {
     shiny::validate(
       need(!is.null(gVars$phTable), "No Pheno Data file!")
     )
-    print("Ciao")
     if(length(gVars$phTable)>1){
       selectInput("time_point_id", "Time Points", choices=c("All"))
       
@@ -2615,7 +2816,6 @@ shinyServer(function(input, output, session) {
     shiny::validate(
       need(!is.null(gVars$phTable), "No Pheno Data file!")
     )
-    print("Ciao")
     if(length(gVars$phTable)>1){
       selectInput("time_point_id", "Time Points", choices=c("All"))
       
@@ -2631,51 +2831,122 @@ shinyServer(function(input, output, session) {
     shiny::validate(need(is.null(gVars$BMDSettings), "No BMD Settings!"))
     
     if(input$BMDSettings == "All"){
-      selected = c(1,2,4,5,6,7,8,12,13,18:34) 
+      selected = c(1,2,4,5,6,7,8,12,13,18:34) #1:34
     }
     if(input$BMDSettings == "Regulatory"){
-      selected = 22:34
+      selected = c(22:34)
     }
     if(input$BMDSettings == "Custom"){
-      selected = c(22,23,25,29,30,31)#c(19,21,22,23,25,27)
+      selected = c(1,22,23,25,31,32,34)#c(19,21,22,23,25,27)
     }
     if(input$BMDSettings == "Degree of Freedom"){
+
       print("degree of freedom")
       if(is.null(gVars$phTable)){
         nDose = 0
+        selected = c()
       }else{
         nDoses = c()
         for(i in 1:length(gVars$phTable)){
           nDoses = c(nDoses,length(unique(gVars$phTable[[i]][,gVars$doseColID])))
         }
+        
+        if(length(nDoses)>0){
+          nDose = min(nDoses)-1
+          DF =  nDose - 1
+          modDF = c(1,2,Inf, 
+                    4,5,2,
+                    3,4,Inf,
+                    Inf,Inf,4,
+                    5,Inf,Inf,
+                    Inf,Inf,2,
+                    3,2,3,
+                    1,2,3,
+                    2,3,4,
+                    1,1,1,
+                    2,3,4,
+                    5)
+          #modDF = c(rep(Inf, 17), modDF[18:length(modDF)])
+          selected = which(modDF<=DF)
+        }else{
+          selected = c()
+        }
       }
-      if(length(nDoses)>0){
-        nDose = min(nDoses)-1
-        DF =  nDose - 1
-        modDF = c(2,3,Inf, 4,5,2,3,4,Inf,Inf,Inf,4,5,Inf,Inf,Inf,Inf,2,3,2,3,1,2,3,2,3,4,1,1,1,2,3,4,5)
-        selected = which(modDF<=DF)
-      }else{
-        selected = c()
-      }
+
     }
+    
+    # f_list = list(drc::LL.2(),drc::LL.3(),drc::LL.3u(),drc::LL.4(),drc::LL.5(),
+    #               drc::W1.2(),drc::W1.3(),drc::W1.4(),drc::W2.2(),drc::W2.3(),drc::W2.4(),
+    #               drc::BC.4(),drc::BC.5(),
+    #               drc::LL2.2(),drc::LL2.3(),drc::LL2.4(),drc::LL2.5(),
+    #               drc::AR.2(),drc::AR.3(),
+    #               drc::MM.2(),drc::MM.3())
+    
+    
     
     tags$div(align = 'left',class = 'multicol', 
              checkboxGroupInput("ModGroup", label = "Models available", 
-                                choices = list("Linear" = 22, "Quadratic" = 23, "Cubic" = 24,
-                                               "Power2" = 25, "Power3" = 26,"Power4" = 27,
-                                               "Exponential" = 28,
-                                               "Hill05"= 29, "Hill1" = 30,
-                                               "Hill2" = 31, "Hill3" = 32, 
-                                               "Hill4" = 33, "Hill5" = 34,
-                                               "AR.2"=18,"AR.3"= 19,
-                                               "MM.2"=20,"MM.3"= 21
-                                               #"LL.2"=1,"LL.3"=2,
-                                               #"LL.4"=4,"LL.5"=5,
-                                               #"W1.2"=6,"W1.3"=7,"W1.4"=8,
-                                               #"BC.4"=12,"BC.5"=13
-                                               #"LL2.2"=14,"LL2.3"=15,"LL2.4"=16,"LL2.5"=17,"LL.3u"=3,"W2.2"=9,"W2.3"=10,"W2.4"=11
+                                choices = list(
+                                   "Log-Logistic.2"=1, "Log-Logistic.3"=2,"Log-Logistic.4"=4,"Log-Logistic.5"=5,
+                                   "Weibull.2"=6,"Weibull.3"=7,"Weibull.4"=8, #"Weibull.2"=9,"Weibull.3"=10,"Weibull.4"=11,
+                                   "Brain-Cousens.4"=12,"Brain-Cousens.5"=13,
+                                   #"Log-Logistic2.2"=14, "Log-Logistic2.3"=15,"Log-Logistic2.4"=16,"Log-Logistic2.5"=17,
+                                  "Asymptotic regression.2"=18,
+                                  "Asymptotic regression.3"=19,
+                                  "Michaelis-Menten.2"=20,
+                                  "Michaelis-Menten.3"=21,
+                                  "Linear"=22,
+                                  "Quadratic"=23,
+                                  "Cubic"=24,
+                                  "Power2"=25,
+                                  "Power3"=26,
+                                  "Power4"=27,
+                                  "Exponential"=28,
+                                  "Hill05"=29,
+                                  "Hill1"=30,
+                                  "Hill2"=31,
+                                  "Hill3"=32,
+                                  "Hill4"=33,
+                                  "Hill5"=34
                                 ),
-                                selected = selected,inline = FALSE)
+                                # choices = list(
+                                #   "Log-Logistic.2"=1, "Log-Logistic.3"=2,"Log-Logistic.3u"=3,"Log-Logistic.4"=4,"Log-Logistic.5"=5,
+                                #   "Weibull.2"=6,"Weibull.3"=7,"Weibull.4"=8, "Weibull.2"=9,"Weibull.3"=10,"Weibull.4"=11,
+                                #   "Brain-Cousens.4"=12,"Brain-Cousens.5"=13,
+                                #   "Log-Logistic2.2"=14, "Log-Logistic2.3"=15,"Log-Logistic2.4"=16,"Log-Logistic2.5"=17,
+                                #   "Asymptotic regression.2"=18,
+                                #   "Asymptotic regression.3"=19,
+                                #   "Michaelis-Menten.2"=20,
+                                #   "Michaelis-Menten.3"=21,
+                                #   "Linear"=22,
+                                #   "Quadratic"=23,
+                                #   "Cubic"=24,
+                                #   "Power2"=25,
+                                #   "Power3"=26,
+                                #   "Power4"=27,
+                                #   "Exponential"=28,
+                                #   "Hill05"=29,
+                                #   "Hill1"=30,
+                                #   "Hill2"=31,
+                                #   "Hill3"=32,
+                                #   "Hill4"=33,
+                                #   "Hill5"=34
+                                # ),
+                                #   list("Linear" = 22, "Quadratic" = 23, "Cubic" = 24,
+                                #                "Power2" = 25, "Power3" = 26,"Power4" = 27,
+                                #                "Exponential" = 28,
+                                #                "Hill05"= 29, "Hill1" = 30,
+                                #                "Hill2" = 31, "Hill3" = 32, 
+                                #                "Hill4" = 33, "Hill5" = 34,
+                                #                "AR.2"=18,"AR.3"= 19,
+                                #                "MM.2"=20,"MM.3"= 21
+                                #                #"LL.2"=1,"LL.3"=2,
+                                #                #"LL.4"=4,"LL.5"=5,
+                                #                #"W1.2"=6,"W1.3"=7,"W1.4"=8,
+                                #                #"BC.4"=12,"BC.5"=13
+                                #                #"LL2.2"=14,"LL2.3"=15,"LL2.4"=16,"LL2.5"=17,"LL.3u"=3,"W2.2"=9,"W2.3"=10,"W2.4"=11
+                                # ),
+                                selected = selected,inline = FALSE, width = '80%')
     )
   })
   
@@ -2863,9 +3134,9 @@ shinyServer(function(input, output, session) {
     if(!is.null(gVars$nSamples)){
       #
       mwidth = (gVars$length_path * 15) + (gVars$nSamples * 20)
-      print(paste("MY sample IS ---->", gVars$nSamples))
-      print(paste("MY path len IS ---->", gVars$length_path))
-      print(paste("MY WIDTH IS ---->", mwidth))
+      # print(paste("MY sample IS ---->", gVars$nSamples))
+      # print(paste("MY path len IS ---->", gVars$length_path))
+      # print(paste("MY WIDTH IS ---->", mwidth))
       
       mwidth = max(600, mwidth)
       
@@ -2889,15 +3160,15 @@ shinyServer(function(input, output, session) {
   })
   
   observeEvent(input$do, {
-    
     shinyjs::html(id="loadingText", "Rendering Map")
     shinyjs::show(id="loading-content")
+    
     on.exit({
       print("inside on exit")
       shinyjs::hide(id="loading-content", anim=TRUE, animType="fade")    
     })
-    # print("input lev1 is the following ---->")
-    # print(input$lev1)
+    
+
     need(is.null(input$lev1), "Please select a level 1 object")
     need(is.null(input$lev2), "Please select a level 2 object")
     need(is.null(input$lev3), "Please select a level 3 object")
@@ -3678,6 +3949,36 @@ shinyServer(function(input, output, session) {
   })
   
   
-  
+  output$exportRpt <- shiny::downloadHandler(
+    filename = function(){
+      paste("BMDx_Analysis_Report_", Sys.Date(), '.html', sep='')
+    },
+    content = function(con){
+      
+      #start loading screen
+      shinyjs::html(id="loadingText", "CREATING ANALYSIS REPORT")
+      shinyjs::show(id="loading-content")
+      
+      on.exit({
+        shinyjs::hide(id="loading-content", anim=TRUE, animType="fade")
+      })
+      #Disable Warning
+      oldw <- getOption("warn")
+      options(warn = -1)
+      
+      tempReport <- file.path(tempdir(), "report.Rmd")
+      file.copy("report.Rmd", tempReport, overwrite=TRUE)
+      
+      #params <- list(gVars=gVars, input=input)
+      params <- list(gVars=gVars, input=input, srcDir=srcDir)
+      rmarkdown::render(tempReport, output_file=con,
+                        params=params,
+                        envir=new.env(parent=globalenv())
+      )
+      
+      #Enable Warning
+      options(warn = oldw)
+    }
+  )
   
 })

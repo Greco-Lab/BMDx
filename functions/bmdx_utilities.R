@@ -2,7 +2,7 @@
 venn_diagram_bmd_genes_across_time_point = function(bmd_list){
   GL = list()
   for(i in 1:length(bmd_list)){
-    BMD_tab <- bmd_list[[i]]$BMDValues_filtered
+    BMD_tab <- bmd_list[[i]][[1]]
     if(!is.null(BMD_tab) & nrow(BMD_tab)>0){
       GL[[names(bmd_list)[i]]] =  BMD_tab[,"Gene"]
     }
@@ -38,7 +38,7 @@ create_gene_bmd_dataframe_and_cluster_genes_by_bmd = function(bmd_list,ItemsList
                  # to their bmd patterns.
   XX = c() # it will contain a dataframe with the following column: Gene, BMD, TimePoint, Clustering
   for(i in innerset){
-    x = bmd_list[[i]]$BMDValues_filtered
+    x = bmd_list[[i]][[1]]
     rownames(x) = as.character(x[,1])
     XX = rbind(XX,cbind(x[ItemsList[[intersectionName]],c("Gene","BMD")],i))
     BMD_gene = cbind(BMD_gene,x[ItemsList[[intersectionName]],"BMD"])

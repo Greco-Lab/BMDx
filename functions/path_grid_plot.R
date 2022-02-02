@@ -131,15 +131,15 @@ collapse_paths <- function (kegg_hierarchy,kegg_mat_cell, collapse_level=1,col_f
 
 
 
-#plots a matrix having colums for wich a hierachy is provided
-# path_mat is matrix to be plotted 
-# path_hier is the hierarchy defined over columns
-# experiment_ann is a vector of the same length as # of rows of path_mat defining grouping for samples
-# discrete tells the function if the value are to be plotted using a countinuos scale or a discrete scale
-# square_colors if a discrete scale is chosen, than the colours for each possible value have to be provided
-# color_leg     if a discrete scale is chosen, than the colour legend for each possible value has to be provided
-# level_col   level (column number) from the hierarchy used to group columns (pathways)
-
+# #plots a matrix having colums for wich a hierachy is provided
+# # path_mat is matrix to be plotted 
+# # path_hier is the hierarchy defined over columns
+# # experiment_ann is a vector of the same length as # of rows of path_mat defining grouping for samples
+# # discrete tells the function if the value are to be plotted using a countinuos scale or a discrete scale
+# # square_colors if a discrete scale is chosen, than the colours for each possible value have to be provided
+# # color_leg     if a discrete scale is chosen, than the colour legend for each possible value has to be provided
+# # level_col   level (column number) from the hierarchy used to group columns (pathways)
+# 
 # plot_grid <- function(path_mat,path_hier, title="", experiment_ann=c(),discrete=F,square_colors=c(),color_leg=c(),level_col=1,treat_text_size=8,path_text_size=6, asRatio = TRUE) {
 #   #save(path_mat, path_hier,experiment_ann,title,discrete,square_colors,color_leg,
 #   #     level_col,treat_text_size,path_text_size,file="demo/demo_plot.RData")

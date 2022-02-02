@@ -8,8 +8,12 @@ suppressMessages(library(rhandsontable))
 suppressMessages(library(shinycssloaders))
 library(plotly)
 library(xtable)
+library(shinyhelper)
 
 appCSS <- "
+//.modal-lg {
+//width: 95%;
+//}
 //.main-header { z-index: 100000; }
 .main-sidebar { background-color: white !important;}
 .sidebar { color: black; max-height: 900px; overflow-y: scroll; }
@@ -26,10 +30,10 @@ appCSS <- "
 .panel-info .panel-heading { background-color: #7e46ff; }
 .panel-primary .panel-heading { background-color: #3079ae; }
 .multicol { 
-height: 150px;
--webkit-column-count: 5; /* Chrome, Safari, Opera */ 
--moz-column-count: 5;    /* Firefox */ 
-column-count: 5; 
+height: 300px;
+-webkit-column-count: 4; /* Chrome, Safari, Opera */ 
+-moz-column-count: 4;    /* Firefox */ 
+column-count: 4; 
 -moz-column-fill: auto;
 -column-fill: auto;
 } 
@@ -54,6 +58,7 @@ margin-right: auto;
 vertical-align: middle;
 z-index: 1000000;
 }
+
 "
 
 jsCode <- "
@@ -136,6 +141,13 @@ fluidPage(
                                 )
                      ),
                      bsCollapse(id="bsSidebar0", open="MORE INFO",
+                                bsCollapsePanel("DOWNLOAD REPORT",style="sample",
+                                                fluidRow(
+                                                  column(12, align="center",
+                                                         downloadButton("exportRpt", "Analysis Report")
+                                                  )
+                                                )            
+                                ),
                                 bsCollapsePanel("MORE INFO", style="sample",
                                                 fluidRow(
                                                   HTML(" <a style=color:blue;  target=\"_blank\"; href=\"https://github.com/Greco-Lab/BMDx\">GitHub</a>")
@@ -238,22 +250,41 @@ fluidPage(
       ),
       shinyBS::bsModal("computeBMD", "Compute BMD Value", "bmd_button", size="large",
                        fluidRow(
-                         column(6, textInput("RespLev", label = "Response Level", value =1.349)),
-                         column(6, checkboxInput("constantVar", "Assumption of Constant Variance", value = TRUE))
+                         column(3, textInput("RespLev", label = "Response Level", value =1.349)),
+                         column(3, checkboxInput("constantVar", "Assumption of Constant Variance", value = TRUE)),
+                         column(3, sliderInput("conf_interval", "Confidece Interval:", min = 0, max = 1, value = 0.95))
                        ),
                        fluidRow(
                          column(4,selectInput("LOOF", "Lack-of-fit PValue Th:", choices=c(0.3,0.2,0.1,0.05),selected=0.1)),
-                         column(4,selectInput("min_dose_perc", "Lowest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0)),
-                         column(4,selectInput("max_dose_perc", "Highest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0))
+                         column(4, checkboxInput("first_model_AIC", "Only the optimal model (min AIC) is considered", value = TRUE)),
+                         column(4, checkboxInput("strictly_monotonic", "Only strictly monotonic models allowed", value = FALSE))
+          
+                         
                        ),
+                       # fluidRow(
+                       #   column(4,selectInput("min_dose_perc", "Lowest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0)),
+                       #   column(4,selectInput("max_dose_perc", "Highest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0)),
+                       #   column(4, checkboxInput("filter_bounds_bmdl_bmdu", "Filter by boundary (BMDL=0 or BMDU=maxDose)", value = FALSE))
+                       #   
+                       # ),
+                       # fluidRow(
+                       #   column(3, sliderInput("bmd_bmdl_th", "BMD/BMDL ratio:", min = 0, max = 100, value = 20)),
+                       #   column(3, sliderInput("bmdu_bmd_th", "BMDU/BMD ratio:", min = 0, max = 100, value = 20)),
+                       #   column(3, sliderInput("bmdu_bmdl_th", "BMDU/BMDL ratio:", min = 0, max = 100, value = 40)),
+                       #   column(3, checkboxInput("ratio_filter", "Ratio filters", value = FALSE))
+                       #   
+                       # ),
                        fluidRow(
-                         column(3, selectInput("BMDNCores", "Number of cores:", choices=c(1:25), selected = 3))
+                         column(3, selectInput("BMDNCores", "Number of cores:", choices=c(1:25), selected = 1))
                        ),
                        fluidRow(
                          column(12,selectInput("BMDSettings", "Select the BMD analysis setting", choices=c("All","Regulatory","Degree of Freedom", "Custom"),selected="Custom"))
                        ),
                        fluidRow(
-                         column(12,wellPanel(uiOutput("bmd_checkbox")))
+                         column(12,offset = 0, 
+                                wellPanel(uiOutput("bmd_checkbox"))
+                          
+                        )
                        ),
                        fluidRow(
                          column(12, align="right",shinyBS::bsButton("bmd_analysis", label="Run BMD", style="info", icon=icon("hand-o-right")))
@@ -292,6 +323,49 @@ fluidPage(
                                                                     The user can choose between $$n = 0.5,1,2,3,4,5$$ while Kd is fixed to 10.")
                                                            
                                                            ),
+                                           bsCollapsePanel("Log-logistic Model", style = "primary",
+                                                           withMathJax(),
+                                                           helpText("The Log-logistic 5 model is defined by the five-parameter model function
+                                                                    $$f(dose, (b, c, d, e, f)) = c + \\dfrac{d-c}{(1+\\exp(b(\\log(dose)-\\log(e))))^f}$$
+                                                                    If the parameter f differs from 1 then the function is asymmetric; otherwise it is symmetric (on log scale).$$\n$$",
+                                                                    
+                                                                    "The Log-logistic 4 model is defined by the four-parameter model function
+                                                                    $$f(dose, (b,c,d,e)) = c + \\dfrac{d-c}{1+\\exp(b(\\log(dose)-\\log(e)))}$$
+                                                                    The function is symmetric about the inflection point (e)$$\n$$",
+                                                                    
+                                                                    "The Log-logistic 3 model is defined by the three-parameter model function
+                                                                    $$f(dose, (b,c,e)) =  c + \\dfrac{1-c}{1+\\exp(b(\\log(dose)-\\log(e)))}$$
+                                                                    The function is symmetric about the inflection point (e)$$\n$$",
+                                                                    
+                                                                    "The Log-logistic 2 model is defined by the two-parameter model function
+                                                                    $$f(dose, (b,e)) = \\dfrac{1}{1+\\exp(b(\\log(dose)-\\log(e)))}$$
+                                                                    The function is symmetric about the inflection point (e)"
+                                                                    )
+                                                            ),
+                                           bsCollapsePanel("Weibull Model", style = "primary",
+                                                           withMathJax(),
+                                                           helpText("The Weibull 4 model is defined by the four-parameter model function
+                                                                    $$f(dose, (b, c, d, e)) = c + (d-c) \\exp(-\\exp(b(\\log(dose)-\\log(e))))$$
+                                                                    The function is asymmetric with inflection point at the dose e$$\n$$",
+                                                                    
+                                                                    "The Weibull 3 model is defined by the three-parameter model function
+                                                                    $$f(dose, (b, d, e)) = 0 + (d-0)\\exp(-\\exp(b(\\log(dose)-e)))$$
+                                                                    The function is asymmetric about the inflection point, that is the parameter \\exp(e).$$\n$$",
+                                                                    
+                                                                    "The Weibull 2 model is defined by the two-parameter model function
+                                                                    $$f(dose, (b, e)) = \\exp(-\\exp(b(\\log(dose)-e))).$$
+                                                                    The function is asymmetric about the inflection point, that is the parameter \\exp(e).$$\n$$"
+                                                                    
+                                                           )
+                                                           ),
+                                           bsCollapsePanel("Brain-Cousens models", style = "primary",
+                                                           withMathJax(),
+                                                           helpText("The Brain-Cousens 5 model is defined by the five-parameter model function
+                                                                    $$ f(dose, b,c,d,e,f) = c + \\dfrac{d-c+fdose}{1+\\exp(b(\\log(dose)-\\log(e)))}$$
+                                                                     obtained by extending the four-parameter log-logistic model 4 to take into account inverse u-shaped hormesis effects.
+                                                                    Fixing the lower limit at c = 0 yields the four-parameter model $$\n$$"
+                                                                     )
+                                                            ),
                                            bsCollapsePanel("Asymptotic Regression", style = "primary",
                                                            withMathJax(),
                                                            helpText("The formula for the asymptotic regression model is the following:
@@ -299,7 +373,7 @@ fluidPage(
                                                                     The parameter c is the lower limit (at x=0), the parameter d is the upper limit and 
                                                                     the parameter e>0 is determining the steepness of the increase of dose.
                                                                     The AR.3 model is the one depending from c, d and e parameters. The AR.2 model depends only on d and e parameters, while c is set to zero")
-                                                           ),
+                                           ),
                                            bsCollapsePanel("Michaelis-Menten Model", style = "primary",
                                                            withMathJax(),
                                                            helpText("The model is defined by the three-parameter model (MM.3) function
@@ -307,7 +381,10 @@ fluidPage(
                                                                     It is increasing as a function of the dose, attaining the lower limit c at dose 0 (x=0) and the upper limit d for infinitely large doses. 
                                                                     The parameter e corresponds to the dose yielding a response halfway between c and d. 
                                                                     The common two-parameter Michaelis-Menten model (MM.2) is obtained by setting c equal to 0.")
-                                                           )
+                                           )
+                                           
+                                           
+                                          
                                                            )
                                                            )
                                                            )
@@ -399,11 +476,26 @@ fluidPage(
                                                              #tabsetPanel(
                                                              tabPanel("Gene Level", 
                                                                       fluidRow(
-                                                                        column(4,uiOutput("ExptimeSelBMD")),
-                                                                        column(4,uiOutput("timePointSel2")),
-                                                                        column(4,downloadButton("downloadBMDData", "Download"))
+                                                                        column(3,uiOutput("ExptimeSelBMD")),
+                                                                        column(3,uiOutput("timePointSel2"))
                                                                       ),
-                                                                      
+                                                                      fluidRow(
+                                                                        column(3, sliderInput("bmd_bmdl_th2", "BMD/BMDL ratio:", min = 0, max = 100, value = 20)),
+                                                                        column(3, sliderInput("bmdu_bmd_th2", "BMDU/BMD ratio:", min = 0, max = 100, value = 20)),
+                                                                        column(3, sliderInput("bmdu_bmdl_th2", "BMDU/BMDL ratio:", min = 0, max = 100, value = 40)),
+                                                                        column(3, checkboxInput("ratio_filter2", "Ratio filters", value = FALSE))
+                                                                      ),
+                                                                      fluidRow(
+                                                                        column(3,selectInput("min_dose_perc2", "Lowest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0.1)),
+                                                                        column(3,selectInput("max_dose_perc2", "Highest dose filter:", choices=c(0,0.1,0.2,0.3),selected=0.1)),
+                                                                        column(3, checkboxInput("filter_bounds_bmdl_bmdu2", "Filter by boundary (BMDL=0 or BMDU=maxDose)", value = FALSE)),
+                                                                        # column(4, checkboxInput("Apply_filter", "Apply Filters", value = FALSE))
+                                                                        column(3, actionButton("Apply_filter", "Apply Filters"))
+                                                                        
+                                                                      ),
+                                                                      fluidRow(
+                                                                        column(3,downloadButton("downloadBMDData", "Download"))
+                                                                      ),
                                                                       fluidRow(
                                                                         column(12, DT::dataTableOutput("BMD_table"))
                                                                       ),
@@ -499,7 +591,7 @@ fluidPage(
                                             
                                             fluidRow(
                                               column(4,checkboxInput("doGrouping", "Show categories", value = TRUE)),
-                                              column(4,checkboxInput("aspectRatio", "Keep aspect ratio", value = TRUE)),
+                                              column(4,checkboxInput("aspectRatio", "Keep aspect ratio", value = FALSE)),
                                               column(4,actionButton("do", "Plot Map")), shinyBS::bsTooltip(id = "do",title ="NOTE: press the Plot Mat button every time you update the map!",placement = "bottom")
                                             )
                                           ),
