@@ -118,8 +118,6 @@ compute_trend_test = function(exp_data, pheno_data, time_t=24,tpc = 4, dc = 2, s
   if(!time_t %in% pheno_data[,tpc])
     stop("'time point not available in the pheno data table!")
   
-
-  
   print("Sample ID column")
   print(sc)
   
@@ -135,11 +133,14 @@ compute_trend_test = function(exp_data, pheno_data, time_t=24,tpc = 4, dc = 2, s
   
   #for each gene in the dataset compute the ANOVA across the different doses
   #pvalues_genes = c()
-
-  cl <- makeCluster(nCores)
-  registerDoParallel(cl)
   
-  pvalues_genes = foreach(i = 1:nrow(exp_data), .combine=c) %dopar% {
+  # cl <- parallel::makeCluster(nCores)
+  # doParallel::registerDoParallel(cl)
+  
+  i = NULL
+  # pvalues_genes = foreach::foreach(i = 1:nrow(exp_data), .combine=c) %dopar% {
+  pvalues_genes = parallel::mclapply(1:nrow(exp_data), function(i){
+    
     #take the value of the genes across the samples at time 1d
     exp = exp_data[i,as.character(df_timei[,sc])]
     
@@ -152,7 +153,7 @@ compute_trend_test = function(exp_data, pheno_data, time_t=24,tpc = 4, dc = 2, s
       return(NULL)
     }
     
-    anova_df2 = aggregate(anova_df[, 1], list(anova_df$dose), median)
+    anova_df2 = stats::aggregate(anova_df[, 1], list(anova_df$dose), stats::median)
     colnames(anova_df2) = c("dose","exp")
     
     trend_test = trend::mk.test(anova_df$exp, alternative="two.sided", continuity=FALSE)
@@ -161,12 +162,13 @@ compute_trend_test = function(exp_data, pheno_data, time_t=24,tpc = 4, dc = 2, s
     pvalue
     # Increment the progress bar, and update the detail text.
     #incProgress(1/nrow(exp_data), detail = paste("Anova Gene", i))
-    
-  }
+  },mc.cores = nCores)
+  # }
   
-  stopCluster(cl)
+  # parallel::stopCluster(cl)
   
   
+  pvalues_genes = unlist(pvalues_genes)
   
   if(is.null(pvalues_genes)){
     return(NULL)
